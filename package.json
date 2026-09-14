@@ -6,9 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:kv": "node tests/kv-concurrency.test.mjs"
   },
   "dependencies": {
+    "@vercel/blob": "^2.8.0",
     "jspdf": "^4.2.1",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.46.0",

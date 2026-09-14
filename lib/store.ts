@@ -6,7 +6,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { seedIncidents } from "./seed-incidents";
-import { kvEnabled, dataDir, kvGetJson, kvSetJson, kvMutate } from "./kv";
+import { kvMode, dataDir, kvLoadDoc, kvSaveDoc, kvMutate } from "./kv";
 import type { Incident, IncidentFilters } from "./types";
 
 const DATA_PATH = path.join(dataDir, ".hillsense-incidents.json");
@@ -21,7 +21,7 @@ let cacheAt = 0;
 /** Invalidate the in-memory cache when the file was changed externally
  *  (manual data fixes, other processes) so edits show without a restart. */
 async function cacheStale(): Promise<boolean> {
-  if (kvEnabled) return cache === null || Date.now() - cacheAt > READ_CACHE_TTL_MS;
+  if (kvMode !== "file") return cache === null || Date.now() - cacheAt > READ_CACHE_TTL_MS;
   try {
     const st = await fs.stat(DATA_PATH);
     return cache !== null && st.mtimeMs > cacheMtimeMs + 1;
@@ -50,10 +50,9 @@ function migrate(raw: Incident[]): Incident[] {
 
 async function load(): Promise<Incident[]> {
   if (cache && !(await cacheStale())) return cache;
-  if (kvEnabled) {
-    const doc = await kvGetJson<Incident[]>(KV_KEY);
-    cache = Array.isArray(doc) ? migrate(doc) : seedIncidents();
-    if (!Array.isArray(doc)) await kvSetJson(KV_KEY, cache); // first boot — seed
+  if (kvMode !== "file") {
+    const doc = await kvLoadDoc<Incident[]>(KV_KEY, seedIncidents);
+    cache = migrate(Array.isArray(doc) ? doc : seedIncidents());
     cacheAt = Date.now();
     return cache;
   }
@@ -80,8 +79,8 @@ async function load(): Promise<Incident[]> {
 async function persist(list: Incident[]): Promise<void> {
   cache = list;
   cacheAt = Date.now();
-  if (kvEnabled) {
-    await kvSetJson(KV_KEY, list);
+  if (kvMode !== "file") {
+    await kvSaveDoc(KV_KEY, list);
     return;
   }
   try {
@@ -130,7 +129,7 @@ export async function getIncident(id: string): Promise<Incident | null> {
 
 export async function addIncident(input: Omit<Incident, "id"> & { verification?: Incident["verification"]; verification_reasons?: string[]; publication?: Incident["publication"]; reporter_label?: string }): Promise<Incident> {
   // Redis mode: allocate the id and insert inside one atomic CAS mutation.
-  if (kvEnabled) {
+  if (kvMode !== "file") {
     return kvMutate<Incident[], Incident>(
       KV_KEY,
       seedIncidents,
@@ -159,7 +158,7 @@ export async function updateStatus(
   status: Incident["status"],
   statusHistory?: Incident["status_history"],
 ): Promise<Incident | null> {
-  if (kvEnabled) {
+  if (kvMode !== "file") {
     return kvMutate<Incident[], Incident | null>(
       KV_KEY,
       seedIncidents,
@@ -205,7 +204,7 @@ export async function confirmIncident(
   stillPresent: boolean,
   counts?: { yes: number; no: number },
 ): Promise<Incident | null> {
-  if (kvEnabled) {
+  if (kvMode !== "file") {
     return kvMutate<Incident[], Incident | null>(
       KV_KEY,
       seedIncidents,

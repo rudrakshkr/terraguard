@@ -23,7 +23,7 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import { kvEnabled, dataDir, kvGetJson, kvMutate } from "./kv";
+import { kvMode, dataDir, kvLoadDoc, kvMutate } from "./kv";
 
 const DATA_PATH = `${dataDir}/.hillsense-auth.json`.replace("//", "/");
 const KV_KEY = "hillsense:auth:v1";
@@ -94,7 +94,7 @@ async function fallback(): Promise<AuthDb> {
 }
 
 async function persistFile(d: AuthDb): Promise<void> {
-  if (kvEnabled) return;
+  if (kvMode !== "file") return;
   try {
     await fs.writeFile(DATA_PATH, JSON.stringify(d, null, 2));
   } catch {
@@ -103,9 +103,8 @@ async function persistFile(d: AuthDb): Promise<void> {
 }
 
 async function loadDb(): Promise<AuthDb> {
-  if (kvEnabled) {
-    const doc = await kvGetJson<AuthDb>(KV_KEY);
-    return doc ? { ...EMPTY, ...doc } : { ...EMPTY };
+  if (kvMode !== "file") {
+    return kvLoadDoc<AuthDb>(KV_KEY, async () => ({ ...EMPTY }));
   }
   if (db) return db;
   db = await fallback();
@@ -114,8 +113,8 @@ async function loadDb(): Promise<AuthDb> {
 
 /** Atomic mutation shared by both backends (see lib/community-store.ts mutate). */
 async function mutate<R>(fn: (d: AuthDb) => { doc: AuthDb; result: R }): Promise<R> {
-  if (kvEnabled) {
-    return kvMutate<AuthDb, R>(KV_KEY, fallback, async (cur) => fn(cur));
+  if (kvMode !== "file") {
+    return kvMutate<AuthDb, R>(KV_KEY, async () => ({ ...EMPTY }), async (cur) => fn(cur));
   }
   const cur = await loadDb();
   const { doc, result } = fn(cur);

@@ -11,7 +11,7 @@
 
 import fs from "node:fs/promises";
 import type { Incident } from "./types";
-import { kvEnabled, dataDir, kvGetJson, kvMutate, kvSetIfMissing } from "./kv";
+import { kvMode, dataDir, kvLoadDoc, kvMutate } from "./kv";
 
 const DATA_PATH = `${dataDir}/.hillsense-community.json`.replace("//", "/");
 const KV_KEY = "hillsense:community:v1";
@@ -54,7 +54,7 @@ function cacheSet(d: CommunityDb): void {
 }
 
 async function persistFile(d: CommunityDb): Promise<void> {
-  if (kvEnabled) return;
+  if (kvMode !== "file") return;
   try {
     await fs.writeFile(DATA_PATH, JSON.stringify(d, null, 2));
   } catch {
@@ -65,9 +65,8 @@ async function persistFile(d: CommunityDb): Promise<void> {
 /* ------------------------------- data access ------------------------------ */
 
 async function loadDb(): Promise<CommunityDb> {
-  if (kvEnabled) {
-    const doc = await kvGetJson<CommunityDb>(KV_KEY);
-    return doc ? { ...EMPTY, ...doc } : { ...EMPTY };
+  if (kvMode !== "file") {
+    return kvLoadDoc<CommunityDb>(KV_KEY, async () => ({ ...EMPTY }));
   }
   if (db) return db;
   const d = await fallback();
@@ -81,8 +80,8 @@ async function loadDb(): Promise<CommunityDb> {
  * compare-and-set retry loop. `fn` must be pure (it may run more than once).
  */
 async function mutate<R>(fn: (d: CommunityDb) => { doc: CommunityDb; result: R }): Promise<R> {
-  if (kvEnabled) {
-    return kvMutate<CommunityDb, R>(KV_KEY, fallback, async (cur) => fn(cur));
+  if (kvMode !== "file") {
+    return kvMutate<CommunityDb, R>(KV_KEY, async () => ({ ...EMPTY }), async (cur) => fn(cur));
   }
   const cur = await loadDb();
   const { doc, result } = fn(cur);
@@ -221,11 +220,4 @@ export function corroboratingReportsFor(incident: Incident, pool: Incident[]): n
       Math.abs(new Date(p.created_at).getTime() - new Date(incident.created_at).getTime()) <
         6 * 3600_000,
   ).length;
-}
-
-/** First-boot seeding for Redis mode (file mode seeds lazily on first write). */
-export async function ensureSeed(): Promise<void> {
-  if (kvEnabled && !(await kvGetJson<CommunityDb>(KV_KEY))) {
-    await kvSetIfMissing(KV_KEY, EMPTY);
-  }
 }

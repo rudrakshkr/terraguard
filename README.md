@@ -45,19 +45,24 @@ Note that browser geolocation requires HTTPS (or localhost), so use a tunnel for
 "Use my location" experience.
 
 **Deployed (two phones, judges, the real deal)** — the app is Vercel-ready. Serverless
-instances share data through [Upstash Redis](https://upstash.com) (free tier), with
-compare-and-set writes so concurrent users can never clobber each other's reports,
-confirmations, or sessions:
+instances share data through a storage backend detected automatically at runtime:
 
-1. Create a free Upstash Redis (REST) and copy its `UPSTASH_REDIS_REST_URL` +
-   `UPSTASH_REDIS_REST_TOKEN`.
-2. Import the repo on [vercel.com](https://vercel.com), add those two env vars (plus
-   `LLM_API_KEY` for live AI verification; add `SMS_PROVIDER_API_URL`/
-   `SMS_PROVIDER_API_KEY` only if you want real SMS OTP delivery).
-3. Deploy → open the URL on any phone. All clients see the same live data.
+1. **Vercel Blob (recommended, zero extra setup):** `vercel link && vercel storage connect
+   <store>` — done. Mutations are serialized through a create-only lease file, so
+   concurrent users can never clobber each other's reports, confirmations, or sessions.
+2. **Upstash Redis (alternative):** set `UPSTASH_REDIS_REST_URL` +
+   `UPSTASH_REDIS_REST_TOKEN`; writes use Lua compare-and-set.
 
-Without Upstash on a read-only serverless filesystem the app still runs per-instance
-(in-memory), but data will not be shared across instances — use Redis for multi-user demos.
+Then add `LLM_API_KEY` for live AI verification (and `SMS_PROVIDER_API_URL`/
+`SMS_PROVIDER_API_KEY` only if you want real SMS OTP delivery), deploy, and open the URL
+on any phone — all clients see the same live data. Locally (`npm run dev`) the plain
+JSON-file store is used and none of this is required.
+
+Run the storage test suite (both backends, concurrency-proven):
+
+```bash
+npm run test:kv
+```
 
 ## The 60-second demo script
 
