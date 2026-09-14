@@ -357,3 +357,8 @@ export async function revokeToken(token: string): Promise<void> {
     return { doc: { ...cur, sessions }, result: undefined };
   });
 }
+
+/** Wipe all users, OTP challenges and sessions (admin reset). */
+export async function resetAuth(): Promise<void> {
+  await mutate<void>(() => ({ doc: { ...EMPTY }, result: undefined }));
+}

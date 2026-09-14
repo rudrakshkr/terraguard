@@ -13,6 +13,10 @@ const DATA_PATH = path.join(dataDir, ".hillsense-incidents.json");
 const KV_KEY = "hillsense:incidents:v1";
 /** Redis mode: refresh the read cache at most this often (mutations always re-read). */
 const READ_CACHE_TTL_MS = 3_000;
+/** Set HS_SEED=0 (e.g. on the production deployment) to start with a clean slate —
+ *  no demonstration incidents. Local dev stays seeded by default. */
+const seedsEnabled = process.env.HS_SEED !== "0";
+const seedFn = (): Incident[] => (seedsEnabled ? seedIncidents() : []);
 
 let cache: Incident[] | null = null;
 let cacheMtimeMs = 0;
@@ -51,8 +55,8 @@ function migrate(raw: Incident[]): Incident[] {
 async function load(): Promise<Incident[]> {
   if (cache && !(await cacheStale())) return cache;
   if (kvMode !== "file") {
-    const doc = await kvLoadDoc<Incident[]>(KV_KEY, seedIncidents);
-    cache = migrate(Array.isArray(doc) ? doc : seedIncidents());
+    const doc = await kvLoadDoc<Incident[]>(KV_KEY, seedFn);
+    cache = migrate(Array.isArray(doc) ? doc : seedFn());
     cacheAt = Date.now();
     return cache;
   }
@@ -132,7 +136,7 @@ export async function addIncident(input: Omit<Incident, "id"> & { verification?:
   if (kvMode !== "file") {
     return kvMutate<Incident[], Incident>(
       KV_KEY,
-      seedIncidents,
+      seedFn,
       (list) => {
         const maxNum = list.reduce((m, i) => {
           const n = Number.parseInt(i.id.replace("HS-", ""), 10);
@@ -161,7 +165,7 @@ export async function updateStatus(
   if (kvMode !== "file") {
     return kvMutate<Incident[], Incident | null>(
       KV_KEY,
-      seedIncidents,
+      seedFn,
       (list) => {
         const idx = list.findIndex((i) => i.id === id);
         if (idx === -1) return { doc: list, result: null };
@@ -194,6 +198,11 @@ export function nextIncidentId(): string {
   return `HS-${Date.now().toString(36)}`;
 }
 
+/** Wipe all incidents (admin reset). The next load re-seeds only if seeds are enabled. */
+export async function resetIncidents(): Promise<void> {
+  await persist([]);
+}
+
 /**
  * Community "is this hazard still present?" confirmation.
  * Counts come from the per-user community store (one response per user),
@@ -207,7 +216,7 @@ export async function confirmIncident(
   if (kvMode !== "file") {
     return kvMutate<Incident[], Incident | null>(
       KV_KEY,
-      seedIncidents,
+      seedFn,
       (list) => {
         const idx = list.findIndex((i) => i.id === id);
         if (idx === -1) return { doc: list, result: null };

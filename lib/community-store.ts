@@ -221,3 +221,13 @@ export function corroboratingReportsFor(incident: Incident, pool: Incident[]): n
         6 * 3600_000,
   ).length;
 }
+
+/** Wipe all confirmations and comments (admin reset). */
+export async function resetCommunity(): Promise<void> {
+  if (kvMode !== "file") {
+    await kvMutate<CommunityDb, void>(KV_KEY, async () => ({ ...EMPTY }), async () => ({ doc: { ...EMPTY }, result: undefined }));
+    return;
+  }
+  cacheSet({ ...EMPTY });
+  await persistFile({ ...EMPTY });
+}
