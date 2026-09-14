@@ -13,6 +13,7 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
+import { dataDir } from "./kv";
 import { embedAPI, aiAvailable } from "./llm";
 
 export interface Chunk {
@@ -44,7 +45,7 @@ function parseFrontMatter(raw: string): { meta: Record<string, string>; body: st
 }
 
 const KB_DIR = path.join(process.cwd(), "knowledge-base");
-const STORE_PATH = path.join(process.cwd(), ".hillsense-store.json");
+const STORE_PATH = path.join(dataDir, ".hillsense-store.json");
 
 let storePromise: Promise<{ chunks: Chunk[]; embedder: "api" | "local" }> | null = null;
 
@@ -168,53 +169,59 @@ function bm25Scores(query: string, chunks: Chunk[]): Map<string, number> {
 
 async function loadStore() {
   if (!storePromise) {
-    storePromise = (async () => {
-      const files = (await fs.readdir(KB_DIR)).filter((f) => f.endsWith(".md")).sort();
-      const chunks: Chunk[] = [];
-      for (const f of files) {
-        const doc = f.replace(/\.md$/, "");
-        const raw = await fs.readFile(path.join(KB_DIR, f), "utf8");
-        const { meta, body } = parseFrontMatter(raw);
-        for (const c of chunkMarkdown(doc, titleFrom(doc, body), body)) {
-          chunks.push({
-            ...c,
-            organization: meta.organization,
-            material: meta.material,
-          });
-        }
-      }
-
-      // Try to reuse a persisted store (avoids re-embedding on cold start).
-      try {
-        const saved = JSON.parse(await fs.readFile(STORE_PATH, "utf8")) as {
-          embedder: string;
-          chunks: Chunk[];
-        };
-        if (
-          saved.embedder === "api" &&
-          saved.chunks.length === chunks.length &&
-          saved.chunks.every((c, i) => c.id === chunks[i].id)
-        )
-          return { chunks: saved.chunks, embedder: "api" as const };
-      } catch {
-        /* no persisted store — build one */
-      }
-
-      // Build: embed via API; on any failure persist the local embedder store.
-      const api = await embedAPI(chunks.map((c) => `${c.title} — ${c.heading} — ${c.text}`));
-      if (api) {
-        chunks.forEach((c, i) => (c.embedding = api[i]));
-        try {
-          await fs.writeFile(STORE_PATH, JSON.stringify({ embedder: "api", chunks }));
-        } catch {
-          /* persistence is best-effort */
-        }
-        return { chunks, embedder: "api" as const };
-      }
-      return { chunks, embedder: "local" as const };
-    })();
+    storePromise = buildStore().catch((err) => {
+      // Allow a retry on the next request instead of caching a rejected promise.
+      storePromise = null;
+      throw err;
+    });
   }
   return storePromise;
+}
+
+async function buildStore() {
+  const files = (await fs.readdir(KB_DIR)).filter((f) => f.endsWith(".md")).sort();
+  const chunks: Chunk[] = [];
+  for (const f of files) {
+    const doc = f.replace(/\.md$/, "");
+    const raw = await fs.readFile(path.join(KB_DIR, f), "utf8");
+    const { meta, body } = parseFrontMatter(raw);
+    for (const c of chunkMarkdown(doc, titleFrom(doc, body), body)) {
+      chunks.push({
+        ...c,
+        organization: meta.organization,
+        material: meta.material,
+      });
+    }
+  }
+
+  // Try to reuse a persisted store (avoids re-embedding on cold start).
+  try {
+    const saved = JSON.parse(await fs.readFile(STORE_PATH, "utf8")) as {
+      embedder: string;
+      chunks: Chunk[];
+    };
+    if (
+      saved.embedder === "api" &&
+      saved.chunks.length === chunks.length &&
+      saved.chunks.every((c, i) => c.id === chunks[i].id)
+    )
+      return { chunks: saved.chunks, embedder: "api" as const };
+  } catch {
+    /* no persisted store — build one */
+  }
+
+  // Build: embed via API; on any failure persist the local embedder store.
+  const api = await embedAPI(chunks.map((c) => `${c.title} — ${c.heading} — ${c.text}`));
+  if (api) {
+    chunks.forEach((c, i) => (c.embedding = api[i]));
+    try {
+      await fs.writeFile(STORE_PATH, JSON.stringify({ embedder: "api", chunks }));
+    } catch {
+      /* persistence is best-effort (read-only FS: rebuilt per cold start) */
+    }
+    return { chunks, embedder: "api" as const };
+  }
+  return { chunks, embedder: "local" as const };
 }
 
 function titleFrom(doc: string, raw: string): string {

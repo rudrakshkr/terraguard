@@ -15,13 +15,18 @@
  *
  * Public profile handling: the API returns only `display_name` (and derived
  * initials) — phone numbers and emails never leave the server.
+ *
+ * Storage: lib/kv.ts — Redis mode (Upstash) runs every mutation as an atomic
+ * compare-and-set loop so concurrent serverless instances stay consistent;
+ * file mode is a JSON document for local dev.
  */
 
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import path from "node:path";
+import { kvEnabled, dataDir, kvGetJson, kvMutate } from "./kv";
 
-const DATA_PATH = path.join(process.cwd(), ".hillsense-auth.json");
+const DATA_PATH = `${dataDir}/.hillsense-auth.json`.replace("//", "/");
+const KV_KEY = "hillsense:auth:v1";
 
 /** Dev mode: no SMS provider configured → codes are returned to the client for demo. */
 export const DEV_MODE =
@@ -80,23 +85,43 @@ interface AuthDb {
 const EMPTY: AuthDb = { otps: {}, users: {}, phone_index: {}, sessions: {} };
 let db: AuthDb | null = null;
 
-async function load(): Promise<AuthDb> {
-  if (db) return db;
+async function fallback(): Promise<AuthDb> {
   try {
-    db = { ...EMPTY, ...(JSON.parse(await fs.readFile(DATA_PATH, "utf8")) as AuthDb) };
+    return { ...EMPTY, ...(JSON.parse(await fs.readFile(DATA_PATH, "utf8")) as AuthDb) };
   } catch {
-    db = { ...EMPTY };
+    return { ...EMPTY };
   }
-  return db;
 }
 
-async function persist(): Promise<void> {
-  if (!db) return;
+async function persistFile(d: AuthDb): Promise<void> {
+  if (kvEnabled) return;
   try {
-    await fs.writeFile(DATA_PATH, JSON.stringify(db, null, 2));
+    await fs.writeFile(DATA_PATH, JSON.stringify(d, null, 2));
   } catch {
     /* best-effort */
   }
+}
+
+async function loadDb(): Promise<AuthDb> {
+  if (kvEnabled) {
+    const doc = await kvGetJson<AuthDb>(KV_KEY);
+    return doc ? { ...EMPTY, ...doc } : { ...EMPTY };
+  }
+  if (db) return db;
+  db = await fallback();
+  return db;
+}
+
+/** Atomic mutation shared by both backends (see lib/community-store.ts mutate). */
+async function mutate<R>(fn: (d: AuthDb) => { doc: AuthDb; result: R }): Promise<R> {
+  if (kvEnabled) {
+    return kvMutate<AuthDb, R>(KV_KEY, fallback, async (cur) => fn(cur));
+  }
+  const cur = await loadDb();
+  const { doc, result } = fn(cur);
+  db = doc;
+  await persistFile(doc);
+  return result;
 }
 
 /** Strip non-digits (keeps leading country code if provided as +91…). */
@@ -131,7 +156,7 @@ export function maskPhone(phone: string): string {
 export async function sendOtp(
   phone: string,
 ): Promise<{ ok: true; devCode?: string; devMode: boolean } | { ok: false; error: string; retryAfterSec?: number }> {
-  const d = await load();
+  const d = await loadDb();
   const now = Date.now();
   const existing = d.otps[phone];
 
@@ -184,8 +209,10 @@ export async function sendOtp(
   }
 
   if (DEV_MODE && !deliveredViaProvider) challenge.dev_code = code;
-  d.otps[phone] = challenge;
-  await persist();
+  await mutate((cur) => ({
+    doc: { ...cur, otps: { ...cur.otps, [phone]: challenge } },
+    result: { ok: true as const, devMode: DEV_MODE && !deliveredViaProvider, ...(challenge.dev_code ? { devCode: challenge.dev_code } : {}) },
+  }));
   return {
     ok: true,
     devMode: DEV_MODE && !deliveredViaProvider,
@@ -201,56 +228,70 @@ export async function verifyOtp(
   | { ok: true; token: string; user: UserRecord; isNew: boolean }
   | { ok: false; error: string }
 > {
-  const d = await load();
-  const challenge = d.otps[phone];
-  if (!challenge) return { ok: false, error: "No code was requested for this number. Please request a new one." };
-
-  if (new Date(challenge.expires_at).getTime() < Date.now()) {
-    delete d.otps[phone];
-    await persist();
-    return { ok: false, error: "That code has expired. Please request a new one." };
-  }
-  if (challenge.attempts >= OTP_MAX_ATTEMPTS) {
-    delete d.otps[phone];
-    await persist();
-    return { ok: false, error: "Too many incorrect attempts. Please request a new code." };
-  }
-
-  challenge.attempts += 1;
   const clean = (code || "").replace(/\D/g, "");
-  if (!clean || sha256(clean) !== challenge.code_hash) {
-    await persist();
-    const left = OTP_MAX_ATTEMPTS - challenge.attempts;
-    return { ok: false, error: left > 0 ? `Incorrect code. ${left} attempt${left === 1 ? "" : "s"} left.` : "Too many incorrect attempts. Please request a new code." };
-  }
+  const outcome = await mutate<
+    | { ok: true; token: string; user: UserRecord; isNew: boolean }
+    | { ok: false; error: string }
+  >((cur) => {
+    const challenge = cur.otps[phone];
+    if (!challenge) return { doc: cur, result: { ok: false as const, error: "No code was requested for this number. Please request a new one." } };
 
-  // Success — consume the challenge.
-  delete d.otps[phone];
+    if (new Date(challenge.expires_at).getTime() < Date.now()) {
+      const otps = { ...cur.otps };
+      delete otps[phone];
+      return { doc: { ...cur, otps }, result: { ok: false as const, error: "That code has expired. Please request a new one." } };
+    }
+    if (challenge.attempts >= OTP_MAX_ATTEMPTS) {
+      const otps = { ...cur.otps };
+      delete otps[phone];
+      return { doc: { ...cur, otps }, result: { ok: false as const, error: "Too many incorrect attempts. Please request a new code." } };
+    }
 
-  const existingId = d.phone_index[phone];
-  const isNew = !existingId;
-  const user: UserRecord = existingId
-    ? d.users[existingId]
-    : {
-        id: crypto.randomUUID(),
-        phone,
-        display_name: "",
-        onboarded: false,
-        created_at: new Date().toISOString(),
+    const attempts = challenge.attempts + 1;
+    if (!clean || sha256(clean) !== challenge.code_hash) {
+      const otps = { ...cur.otps, [phone]: { ...challenge, attempts } };
+      const left = OTP_MAX_ATTEMPTS - attempts;
+      return {
+        doc: { ...cur, otps },
+        result: {
+          ok: false as const,
+          error: left > 0 ? `Incorrect code. ${left} attempt${left === 1 ? "" : "s"} left.` : "Too many incorrect attempts. Please request a new code.",
+        },
       };
-  d.phone_index[phone] = user.id;
-  d.users[user.id] = user;
+    }
 
-  const token = crypto.randomBytes(32).toString("base64url");
-  const nowIso = new Date().toISOString();
-  d.sessions[sha256(token)] = {
-    token_hash: sha256(token),
-    user_id: user.id,
-    created_at: nowIso,
-    expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
-  };
-  await persist();
-  return { ok: true, token, user, isNew };
+    // Success — consume the challenge.
+    const otps = { ...cur.otps };
+    delete otps[phone];
+
+    const existingId = cur.phone_index[phone];
+    const isNew = !existingId;
+    const user: UserRecord = existingId
+      ? cur.users[existingId]
+      : {
+          id: crypto.randomUUID(),
+          phone,
+          display_name: "",
+          onboarded: false,
+          created_at: new Date().toISOString(),
+        };
+    const phone_index = { ...cur.phone_index, [phone]: user.id };
+    const users = { ...cur.users, [user.id]: user };
+
+    const token = crypto.randomBytes(32).toString("base64url");
+    const nowIso = new Date().toISOString();
+    const sessions = {
+      ...cur.sessions,
+      [sha256(token)]: {
+        token_hash: sha256(token),
+        user_id: user.id,
+        created_at: nowIso,
+        expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      },
+    };
+    return { doc: { ...cur, otps, users, phone_index, sessions }, result: { ok: true as const, token, user, isNew } };
+  });
+  return outcome;
 }
 
 /** Resolve the caller's session from a Bearer token. Returns null when invalid/expired. */
@@ -261,15 +302,17 @@ export async function userFromRequest(req: Request): Promise<UserRecord | null> 
   const token = m[1].trim();
   if (!token) return null;
 
-  const d = await load();
-  const session = d.sessions[sha256(token)];
-  if (!session) return null;
-  if (new Date(session.expires_at).getTime() < Date.now()) {
-    delete d.sessions[session.token_hash];
-    await persist();
-    return null;
-  }
-  return d.users[session.user_id] ?? null;
+  const tokenHash = sha256(token);
+  return mutate<UserRecord | null>((cur) => {
+    const session = cur.sessions[tokenHash];
+    if (!session) return { doc: cur, result: null };
+    if (new Date(session.expires_at).getTime() < Date.now()) {
+      const sessions = { ...cur.sessions };
+      delete sessions[tokenHash];
+      return { doc: { ...cur, sessions }, result: null };
+    }
+    return { doc: cur, result: cur.users[session.user_id] ?? null };
+  });
 }
 
 /** Persist profile edits (onboarding: name/email/location). Phone is immutable. */
@@ -277,17 +320,16 @@ export async function updateUser(
   userId: string,
   patch: Partial<Pick<UserRecord, "display_name" | "email" | "onboarded" | "location">>,
 ): Promise<UserRecord | null> {
-  const d = await load();
-  const user = d.users[userId];
-  if (!user) return null;
-  const updated: UserRecord = { ...user, ...patch };
-  d.users[userId] = updated;
-  await persist();
-  return updated;
+  return mutate<UserRecord | null>((cur) => {
+    const user = cur.users[userId];
+    if (!user) return { doc: cur, result: null };
+    const updated: UserRecord = { ...user, ...patch };
+    return { doc: { ...cur, users: { ...cur.users, [userId]: updated } }, result: updated };
+  });
 }
 
 export async function getUserById(userId: string): Promise<UserRecord | null> {
-  const d = await load();
+  const d = await loadDb();
   return d.users[userId] ?? null;
 }
 
@@ -309,7 +351,10 @@ export function publicUser(u: UserRecord) {
 
 /** Delete a session (logout). */
 export async function revokeToken(token: string): Promise<void> {
-  const d = await load();
-  delete d.sessions[sha256(token)];
-  await persist();
+  const tokenHash = sha256(token);
+  await mutate<void>((cur) => {
+    const sessions = { ...cur.sessions };
+    delete sessions[tokenHash];
+    return { doc: { ...cur, sessions }, result: undefined };
+  });
 }

@@ -6,6 +6,12 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  // File-based stores read/write runtime JSON next to the app. On read-only
+  // filesystems (serverless sandboxes without an external KV) fail silently —
+  // the app stays fully functional per-instance with an in-memory cache.
+  outputFileTracingIncludes: {
+    "/api/**": ["./knowledge-base/**"],
+  },
 };
 
 export default nextConfig;

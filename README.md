@@ -36,6 +36,29 @@ npm run dev
 Any other OpenAI-compatible provider (OpenAI, OpenRouter, Groq, Ollama) works by overriding
 `LLM_BASE_URL` / `LLM_MODEL` — see `.env.example`.
 
+## Running it live (phones, demo, production)
+
+**Local dev** — nothing to configure; data persists in `.hillsense-*.json` files.
+
+**On your phone over the same Wi-Fi** — open `http://<your-lan-ip>:3000` from the phone.
+Note that browser geolocation requires HTTPS (or localhost), so use a tunnel for the full
+"Use my location" experience.
+
+**Deployed (two phones, judges, the real deal)** — the app is Vercel-ready. Serverless
+instances share data through [Upstash Redis](https://upstash.com) (free tier), with
+compare-and-set writes so concurrent users can never clobber each other's reports,
+confirmations, or sessions:
+
+1. Create a free Upstash Redis (REST) and copy its `UPSTASH_REDIS_REST_URL` +
+   `UPSTASH_REDIS_REST_TOKEN`.
+2. Import the repo on [vercel.com](https://vercel.com), add those two env vars (plus
+   `LLM_API_KEY` for live AI verification; add `SMS_PROVIDER_API_URL`/
+   `SMS_PROVIDER_API_KEY` only if you want real SMS OTP delivery).
+3. Deploy → open the URL on any phone. All clients see the same live data.
+
+Without Upstash on a read-only serverless filesystem the app still runs per-instance
+(in-memory), but data will not be shared across instances — use Redis for multi-user demos.
+
 ## The 60-second demo script
 
 1. **Landing page** (`/`) — hero, how-it-works, example scenario pipeline.

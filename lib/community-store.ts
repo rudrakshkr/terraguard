@@ -1,13 +1,20 @@
 /**
  * Community-response store: confirmations ("still present / cleared") and
  * comments. Both are persisted per-user so a refresh can never re-submit.
+ *
+ * Storage backends (lib/kv.ts):
+ *  - Redis mode (Upstash configured): every mutation runs as an atomic
+ *    compare-and-set loop, so two phones confirming the same incident at the
+ *    same moment on different serverless instances can never both "win".
+ *  - File mode (default): JSON file, single process.
  */
 
 import fs from "node:fs/promises";
-import path from "node:path";
 import type { Incident } from "./types";
+import { kvEnabled, dataDir, kvGetJson, kvMutate, kvSetIfMissing } from "./kv";
 
-const DATA_PATH = path.join(process.cwd(), ".hillsense-community.json");
+const DATA_PATH = `${dataDir}/.hillsense-community.json`.replace("//", "/");
+const KV_KEY = "hillsense:community:v1";
 
 export interface ConfirmationRecord {
   incident_id: string;
@@ -33,32 +40,62 @@ interface CommunityDb {
 const EMPTY: CommunityDb = { confirmations: [], comments: [] };
 let db: CommunityDb | null = null;
 
-async function load(): Promise<CommunityDb> {
-  if (db) return db;
+async function fallback(): Promise<CommunityDb> {
   try {
-    db = { ...EMPTY, ...(JSON.parse(await fs.readFile(DATA_PATH, "utf8")) as CommunityDb) };
+    return { ...EMPTY, ...(JSON.parse(await fs.readFile(DATA_PATH, "utf8")) as CommunityDb) };
   } catch {
-    db = { ...EMPTY };
+    return { ...EMPTY };
   }
-  return db;
 }
 
-async function persist(): Promise<void> {
-  if (!db) return;
+/** File mode: keep the in-memory mirror in sync; Redis mode leaves it null. */
+function cacheSet(d: CommunityDb): void {
+  db = d;
+}
+
+async function persistFile(d: CommunityDb): Promise<void> {
+  if (kvEnabled) return;
   try {
-    await fs.writeFile(DATA_PATH, JSON.stringify(db, null, 2));
+    await fs.writeFile(DATA_PATH, JSON.stringify(d, null, 2));
   } catch {
     /* best-effort */
   }
 }
 
+/* ------------------------------- data access ------------------------------ */
+
+async function loadDb(): Promise<CommunityDb> {
+  if (kvEnabled) {
+    const doc = await kvGetJson<CommunityDb>(KV_KEY);
+    return doc ? { ...EMPTY, ...doc } : { ...EMPTY };
+  }
+  if (db) return db;
+  const d = await fallback();
+  cacheSet(d);
+  return d;
+}
+
+/**
+ * Atomic mutation shared by both backends. File mode mutates the in-memory
+ * document then persists; Redis mode runs the same pure function inside the
+ * compare-and-set retry loop. `fn` must be pure (it may run more than once).
+ */
+async function mutate<R>(fn: (d: CommunityDb) => { doc: CommunityDb; result: R }): Promise<R> {
+  if (kvEnabled) {
+    return kvMutate<CommunityDb, R>(KV_KEY, fallback, async (cur) => fn(cur));
+  }
+  const cur = await loadDb();
+  const { doc, result } = fn(cur);
+  cacheSet(doc);
+  await persistFile(doc);
+  return result;
+}
+
 /* ----------------------------- confirmations ----------------------------- */
 
-export function hasConfirmed(incidentId: string, userId: string): ConfirmationRecord | null {
-  if (!db) return null;
-  return (
-    db.confirmations.find((c) => c.incident_id === incidentId && c.user_id === userId) ?? null
-  );
+export async function hasConfirmed(incidentId: string, userId: string): Promise<ConfirmationRecord | null> {
+  const d = await loadDb();
+  return d.confirmations.find((c) => c.incident_id === incidentId && c.user_id === userId) ?? null;
 }
 
 /**
@@ -70,30 +107,35 @@ export async function recordConfirmation(
   userId: string,
   response: "yes" | "no",
 ): Promise<{ record: ConfirmationRecord; already: false } | { record: ConfirmationRecord; already: true }> {
-  const d = await load();
-  const existing = d.confirmations.find(
-    (c) => c.incident_id === incidentId && c.user_id === userId,
-  );
-  if (existing) return { record: existing, already: true };
-  const record: ConfirmationRecord = {
-    incident_id: incidentId,
-    user_id: userId,
-    response,
-    at: new Date().toISOString(),
-  };
-  d.confirmations.push(record);
-  await persist();
-  return { record, already: false };
+  return mutate<{
+    record: ConfirmationRecord;
+    already: boolean;
+  }>((d) => {
+    const existing = d.confirmations.find(
+      (c) => c.incident_id === incidentId && c.user_id === userId,
+    );
+    if (existing) return { doc: d, result: { record: existing, already: true } };
+    const record: ConfirmationRecord = {
+      incident_id: incidentId,
+      user_id: userId,
+      response,
+      at: new Date().toISOString(),
+    };
+    return {
+      doc: { ...d, confirmations: [...d.confirmations, record] },
+      result: { record, already: false },
+    };
+  }) as Promise<{ record: ConfirmationRecord; already: false } | { record: ConfirmationRecord; already: true }>;
 }
 
-export function listConfirmations(incidentId: string): ConfirmationRecord[] {
-  if (!db) return [];
-  return db.confirmations.filter((c) => c.incident_id === incidentId);
+export async function listConfirmations(incidentId: string): Promise<ConfirmationRecord[]> {
+  const d = await loadDb();
+  return d.confirmations.filter((c) => c.incident_id === incidentId);
 }
 
 /** Recount aggregate yes/no from the persisted per-user records. */
-export function confirmationCounts(incidentId: string): { yes: number; no: number } {
-  const list = listConfirmations(incidentId);
+export async function confirmationCounts(incidentId: string): Promise<{ yes: number; no: number }> {
+  const list = await listConfirmations(incidentId);
   return {
     yes: list.filter((c) => c.response === "yes").length,
     no: list.filter((c) => c.response === "no").length,
@@ -103,15 +145,14 @@ export function confirmationCounts(incidentId: string): { yes: number; no: numbe
 /* -------------------------------- comments -------------------------------- */
 
 const MAX_COMMENTS_PER_INCIDENT = 200;
+const REPEAT_WINDOW_MS = 60_000; // basic duplicate-protection window
 
-export function listComments(incidentId: string): CommentRecord[] {
-  if (!db) return [];
-  return db.comments
+export async function listComments(incidentId: string): Promise<CommentRecord[]> {
+  const d = await loadDb();
+  return d.comments
     .filter((c) => c.incident_id === incidentId)
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
-
-const REPEAT_WINDOW_MS = 60_000; // basic duplicate-protection window
 
 export async function addComment(
   incidentId: string,
@@ -119,54 +160,56 @@ export async function addComment(
   authorName: string,
   body: string,
 ): Promise<{ ok: true; comment: CommentRecord } | { ok: false; error: string }> {
-  const d = await load();
   const clean = body.trim().replace(/\s+/g, " ").slice(0, 600);
   if (!clean) return { ok: false, error: "Comment cannot be empty." };
 
-  const now = Date.now();
-  const dup = d.comments.find(
-    (c) =>
-      c.incident_id === incidentId &&
-      c.user_id === userId &&
-      c.body.toLowerCase() === clean.toLowerCase() &&
-      now - new Date(c.created_at).getTime() < REPEAT_WINDOW_MS,
+  return mutate<{ ok: boolean; comment?: CommentRecord; error?: string }>((d) => {
+    const now = Date.now();
+    const dup = d.comments.find(
+      (c) =>
+        c.incident_id === incidentId &&
+        c.user_id === userId &&
+        c.body.toLowerCase() === clean.toLowerCase() &&
+        now - new Date(c.created_at).getTime() < REPEAT_WINDOW_MS,
+    );
+    if (dup) return { doc: d, result: { ok: false, error: "You just posted that comment." } };
+
+    const recentByUser = d.comments.filter(
+      (c) => c.user_id === userId && now - new Date(c.created_at).getTime() < REPEAT_WINDOW_MS,
+    );
+    if (recentByUser.length >= 3) {
+      return { doc: d, result: { ok: false, error: "You're posting too quickly. Please wait a moment." } };
+    }
+
+    if (d.comments.filter((c) => c.incident_id === incidentId).length >= MAX_COMMENTS_PER_INCIDENT) {
+      return { doc: d, result: { ok: false, error: "This incident has reached its comment limit." } };
+    }
+
+    const comment: CommentRecord = {
+      id: `cm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      incident_id: incidentId,
+      user_id: userId,
+      author_name: authorName,
+      body: clean,
+      created_at: new Date().toISOString(),
+    };
+    return {
+      doc: { ...d, comments: [...d.comments, comment] },
+      result: { ok: true, comment },
+    };
+  }).then((r) =>
+    r.ok ? { ok: true as const, comment: r.comment! } : { ok: false as const, error: r.error ?? "Could not post the comment." },
   );
-  if (dup) return { ok: false, error: "You just posted that comment." };
-
-  const recentByUser = d.comments.filter(
-    (c) => c.user_id === userId && now - new Date(c.created_at).getTime() < REPEAT_WINDOW_MS,
-  );
-  if (recentByUser.length >= 3) {
-    return { ok: false, error: "You're posting too quickly. Please wait a moment." };
-  }
-
-  if (d.comments.filter((c) => c.incident_id === incidentId).length >= MAX_COMMENTS_PER_INCIDENT) {
-    return { ok: false, error: "This incident has reached its comment limit." };
-  }
-
-  const comment: CommentRecord = {
-    id: `cm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-    incident_id: incidentId,
-    user_id: userId,
-    author_name: authorName,
-    body: clean,
-    created_at: new Date().toISOString(),
-  };
-  d.comments.push(comment);
-  await persist();
-  return { ok: true, comment };
 }
 
-export async function deleteComment(
-  commentId: string,
-  userId: string,
-): Promise<boolean> {
-  const d = await load();
-  const idx = d.comments.findIndex((c) => c.id === commentId && c.user_id === userId);
-  if (idx === -1) return false;
-  d.comments.splice(idx, 1);
-  await persist();
-  return true;
+export async function deleteComment(commentId: string, userId: string): Promise<boolean> {
+  return mutate<boolean>((d) => {
+    const idx = d.comments.findIndex((c) => c.id === commentId && c.user_id === userId);
+    if (idx === -1) return { doc: d, result: false };
+    const comments = [...d.comments];
+    comments.splice(idx, 1);
+    return { doc: { ...d, comments }, result: true };
+  });
 }
 
 /** Number of distinct community reports on the same incident (corroboration). */
@@ -178,4 +221,11 @@ export function corroboratingReportsFor(incident: Incident, pool: Incident[]): n
       Math.abs(new Date(p.created_at).getTime() - new Date(incident.created_at).getTime()) <
         6 * 3600_000,
   ).length;
+}
+
+/** First-boot seeding for Redis mode (file mode seeds lazily on first write). */
+export async function ensureSeed(): Promise<void> {
+  if (kvEnabled && !(await kvGetJson<CommunityDb>(KV_KEY))) {
+    await kvSetIfMissing(KV_KEY, EMPTY);
+  }
 }

@@ -7,6 +7,8 @@ import { listComments } from "@/lib/community-store";
 import type { IncidentAnalysis, Incident, Severity } from "@/lib/types";
 
 export const runtime = "nodejs";
+// Never cache: incidents and community data must be live across all clients.
+export const dynamic = "force-dynamic";
 
 /**
  * GET — dashboard mode (default) or public nearby mode (?public=1&lat=&lng=&radius_km=).
@@ -152,7 +154,7 @@ export async function POST(req: NextRequest) {
       incident.related_ids = related.map((r) => r.incident.id);
     }
 
-    const firstComment = listComments(incident.id);
+    const firstComment = await listComments(incident.id);
     return NextResponse.json(
       { incident, related, user: publicUser(user), comments: firstComment },
       { status: 201 },

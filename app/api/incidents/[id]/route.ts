@@ -11,6 +11,8 @@ import {
 import { userFromRequest, getUserById } from "@/lib/auth";
 
 export const runtime = "nodejs";
+// Never cache: incidents and community data must be live across all clients.
+export const dynamic = "force-dynamic";
 
 export async function GET(
   _req: NextRequest,
@@ -25,12 +27,12 @@ export async function GET(
 
     // Comments are public observations, shown to everyone on the detail page.
     // Phone numbers/private info never enter comment records, so this is safe.
-    const comments = listComments(id);
+    const comments = await listComments(id);
 
     // If the caller is authenticated, tell them whether they already responded
     // so the UI can show the completed state after a refresh.
     const user = await userFromRequest(_req);
-    const mine = user ? hasConfirmed(id, user.id) : null;
+    const mine = user ? await hasConfirmed(id, user.id) : null;
 
     return NextResponse.json({
       incident,
@@ -103,7 +105,7 @@ export async function POST(
         );
       }
 
-      const counts = confirmationCounts(id);
+      const counts = await confirmationCounts(id);
       const updated = await confirmIncident(id, response === "yes", counts);
       if (!updated) {
         return NextResponse.json({ error: "Incident not found." }, { status: 404 });

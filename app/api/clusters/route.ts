@@ -3,6 +3,8 @@ import { listIncidents } from "@/lib/store";
 import { detectClusters } from "@/lib/geo";
 
 export const runtime = "nodejs";
+// Never cache: incidents and community data must be live across all clients.
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
