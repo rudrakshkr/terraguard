@@ -166,6 +166,36 @@ function detectType(text: string): { type: IncidentType; matched: boolean } {
   return { type: "Other", matched: false };
 }
 
+/**
+ * Build "Why this severity?" bullets from the actual evidence: the report
+ * wording, the matched type playbook risks, and severity modifiers found in
+ * the text. No per-scenario hard-coding.
+ */
+export function buildSeverityReasons(
+  text: string,
+  type: IncidentType,
+  severity: Severity,
+  risk: string[],
+): string[] {
+  const t = text.toLowerCase();
+  const reasons: string[] = [];
+  const add = (s: string) => {
+    if (reasons.length < 5 && !reasons.includes(s)) reasons.push(s);
+  };
+
+  if (CRITICAL_WORDS.some((w) => t.includes(w))) add("Report wording indicates people may be directly endangered");
+  if (/(trapped|stranded|stuck)/.test(t)) add("People or vehicles potentially exposed at the site");
+  if (/(blocked|blockage|closed)/.test(t)) add("Access route reported blocked or restricted");
+  if (/(rain|raining|shower)/.test(t)) add("Active rainfall reported in the area");
+  if (/(rising|muddy|swollen|cloudburst)/.test(t)) add("Water level or flow behaviour reported as dangerous");
+  if (/(night|dark|evening)/.test(t)) add("Low visibility complicates assessment and response");
+  if (/(tourist|visitors)/.test(t)) add("Visitors unfamiliar with local hazards may be involved");
+  for (const r of risk.slice(0, 3)) add(r);
+  if (reasons.length === 0) add(`Classified as ${type} with no aggravating evidence in the report`);
+  if (severity === "Low") add("No indicators of immediate danger to people or access routes");
+  return reasons.slice(0, 5);
+}
+
 function detectSeverity(text: string, type: IncidentType): Severity {
   const t = text.toLowerCase();
   if (CRITICAL_WORDS.some((w) => t.includes(w))) return "Critical";
@@ -188,19 +218,31 @@ export function heuristicAnalysis(text: string, hasImage: boolean): IncidentAnal
   if (t.includes("tourist")) risk.push("Tourists unfamiliar with local hazard protocols");
   if (hasImage) risk.push("Image evidence attached — verify extent before clearance");
 
+  // NOTE: callers pass the description (+ optionally structured context) for
+  // classification. The summary defaults to the text but callers should
+  // override it with the reporter's description alone (see lib/hillsense.ts).
   const summary =
     (text || "").trim().slice(0, 220) ||
     `${type} reported${hasImage ? " with image evidence" : ""}.`;
 
+  // Evidence too weak to classify confidently → say so instead of guessing.
+  const matched = detectType(text || "").matched;
+  const weak = !matched && !hasImage;
+
   return {
     incident_type: type,
     severity,
-    confidence: hasImage ? 0.62 : 0.55,
+    // Confidence reflects signal quality: a clearly matched hazard type is a
+    // strong lexical signal even in heuristic mode (UI shows bands, not %).
+    confidence: hasImage ? 0.68 : matched ? 0.72 : 0.5,
     summary,
     risk_factors: risk.slice(0, 5),
     immediate_actions: book.immediate_actions,
     avoid: book.avoid,
     recommended_response: book.recommended_response,
     requires_urgent_attention: severity === "Critical" || severity === "High",
+    severity_reasons: buildSeverityReasons(text || "", type, severity, risk),
+    needs_verification: weak,
+    ...(weak ? { verification_note: "Heuristic engine could not match a specific incident type from the description. Human/on-site verification is recommended before acting on this classification." } : {}),
   };
 }

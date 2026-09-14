@@ -10,6 +10,10 @@ export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
     const text = String(form.get("text") ?? "").trim();
+    const context = String(form.get("context") ?? "").trim(); // structured form fields
+    const hazardType = String(form.get("hazard_type") ?? "").trim();
+    const lat = Number.parseFloat(String(form.get("lat") ?? ""));
+    const lng = Number.parseFloat(String(form.get("lng") ?? ""));
     const file = form.get("image");
 
     let imageBase64: string | null = null;
@@ -38,7 +42,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await analyzeIncident({ text, imageBase64 });
+    const result = await analyzeIncident({
+      text,
+      imageBase64,
+      context,
+      hazardType: hazardType || undefined,
+      location: Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : undefined,
+    });
     return NextResponse.json(result);
   } catch (err) {
     console.error("[api/analyze]", err);

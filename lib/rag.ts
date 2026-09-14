@@ -22,6 +22,25 @@ export interface Chunk {
   heading: string;
   text: string;
   embedding?: number[] | null;
+  organization?: string;
+  material?: string;
+}
+
+/**
+ * Minimal front-matter: a leading `---` block of `key: value` lines.
+ * Lets future OFFICIAL documents carry organization/verified metadata that
+ * flows through to the UI without any RAG-engine changes.
+ */
+function parseFrontMatter(raw: string): { meta: Record<string, string>; body: string } {
+  if (!raw.startsWith("---")) return { meta: {}, body: raw };
+  const end = raw.indexOf("\n---", 3);
+  if (end === -1) return { meta: {}, body: raw };
+  const meta: Record<string, string> = {};
+  for (const line of raw.slice(4, end).split("\n")) {
+    const i = line.indexOf(":");
+    if (i > 0) meta[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  return { meta, body: raw.slice(end + 4) };
 }
 
 const KB_DIR = path.join(process.cwd(), "knowledge-base");
@@ -155,7 +174,14 @@ async function loadStore() {
       for (const f of files) {
         const doc = f.replace(/\.md$/, "");
         const raw = await fs.readFile(path.join(KB_DIR, f), "utf8");
-        chunks.push(...chunkMarkdown(doc, titleFrom(doc, raw), raw));
+        const { meta, body } = parseFrontMatter(raw);
+        for (const c of chunkMarkdown(doc, titleFrom(doc, body), body)) {
+          chunks.push({
+            ...c,
+            organization: meta.organization,
+            material: meta.material,
+          });
+        }
       }
 
       // Try to reuse a persisted store (avoids re-embedding on cold start).
@@ -202,6 +228,8 @@ export interface RagHit {
   doc: string;
   excerpt: string;
   score: number;
+  organization?: string;
+  material?: string;
 }
 
 /** Retrieve the top-k knowledge chunks for a query. Never throws. */
@@ -239,6 +267,8 @@ export async function retrieve(
         doc: chunk.doc,
         excerpt: chunk.text.slice(0, 400),
         score: Number(score.toFixed(3)),
+        organization: chunk.organization,
+        material: chunk.material,
       })),
     };
   } catch (err) {

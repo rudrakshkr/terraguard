@@ -1,157 +1,330 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import {
-  Mountain,
-  ScanSearch,
-  BookOpenCheck,
-  Mic,
-  Gauge,
-  ScrollText,
-  LayoutDashboard,
-  ArrowRight,
-  Siren,
+  MapPin, LocateFixed, ShieldCheck, Clock, Radio,
+  List, Map as MapIcon, Phone, LogIn, Search, Siren,
 } from "lucide-react";
+import type { Incident } from "@/lib/types";
+import { useLocationPreference, PRESETS } from "@/hooks/useLocationPreference";
+import { useAuth } from "@/hooks/useAuth";
+import { haversineKm, fmtDistance, fmtAge, freshnessOf, minutesSince, needsReconfirmation } from "@/lib/geo";
+import { Spinner } from "@/components/Spinner";
 
-const STEPS = [
-  { n: 1, title: "Report", desc: "Image, text or voice — whatever the situation allows.", icon: Siren },
-  { n: 2, title: "Analyze", desc: "Vision + language model classifies type, severity, urgency.", icon: ScanSearch },
-  { n: 3, title: "Ground", desc: "RAG retrieves safety knowledge; recommendations cite it.", icon: BookOpenCheck },
-  { n: 4, title: "Respond", desc: "Actions, map view and a shareable incident report.", icon: Gauge },
-];
+const IncidentMap = dynamic(() => import("@/components/IncidentMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="card flex h-[380px] items-center justify-center">
+      <Spinner className="h-5 w-5" />
+    </div>
+  ),
+});
 
-const CAPABILITIES = [
-  { icon: ScanSearch, title: "Multimodal incident analysis", desc: "Image + text understanding of landslides, flash floods, rockfall and more." },
-  { icon: BookOpenCheck, title: "RAG-powered safety guidance", desc: "Every recommendation is grounded in a local disaster-safety knowledge base." },
-  { icon: Mic, title: "Voice reporting", desc: "Speak the report in English or Hindi; transcription is editable before analysis." },
-  { icon: Gauge, title: "Risk classification", desc: "Severity, confidence and urgency flags following a documented severity guide." },
-  { icon: ScrollText, title: "Incident report generation", desc: "One click produces a structured report — printable and downloadable as PDF." },
-  { icon: LayoutDashboard, title: "Command-center dashboard", desc: "Live map, severity filters, charts and incident management for responders." },
-];
+/** Reusable hazard card — one component, one padding system, aligned metadata. */
+function HazardCard({ incident, km }: { incident: Incident; km: number | null }) {
+  const i = incident;
+  const fresh = freshnessOf(i);
+  const confirmLabel =
+    i.status === "Resolved"
+      ? "Resolved"
+      : fresh === "fresh"
+        ? `Last confirmed ${fmtAge(minutesSince(i.last_confirmed_at ?? i.created_at))}`
+        : fresh === "recent"
+          ? "Awaiting reconfirmation"
+          : "Needs reconfirmation";
 
-const PIPELINE = [
-  { label: "Input", value: "“Heavy rain has triggered a landslide and blocked a road near Kullu.”", tone: "text-[#e6edf3]" },
-  { label: "AI Analysis", value: "Landslide · High severity · 0.91 confidence — debris on highway, vehicles stranded, rain ongoing", tone: "text-sky-300" },
-  { label: "Recommendations", value: "Cordon both approaches · move people clear of the slope · divert traffic · request PWD clearance (grounded in 3 sources)", tone: "text-emerald-300" },
-  { label: "Report", value: "HS-1001 · Kullu · structured PDF with evidence, actions and source references", tone: "text-amber-300" },
-];
-
-export default function LandingPage() {
   return (
-    <div className="topo">
-      {/* Hero */}
-      <section className="mx-auto max-w-7xl px-4 pb-16 pt-20 text-center sm:pt-24">
-        <div className="fade-up mx-auto mb-6 inline-flex items-center gap-2 rounded-full bg-sky-500/10 px-3.5 py-1.5 text-xs font-medium text-sky-300 ring-1 ring-sky-500/30">
-          <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
-          Engineering Day prototype · decision support, not official advisories
+    <li>
+      <Link
+        href={`/incident/${i.id}`}
+        className="card fade-up flex flex-col gap-2.5 p-4 transition hover:-translate-y-px sm:p-5"
+        aria-label={`${i.incident_type}, ${i.severity} severity`}
+      >
+        {/* Header row: severity + type … AI VERIFIED pinned right */}
+        <div className="flex items-center gap-2.5">
+          <span className={`chip chip-${i.severity.toLowerCase()} shrink-0`}>
+            <span className="dot" />
+            {i.severity.toUpperCase()}
+          </span>
+          <h3 className="min-w-0 flex-1 truncate text-[15px] font-semibold leading-snug">{i.incident_type}</h3>
+          <span className="chip chip-info shrink-0">
+            <ShieldCheck className="h-3 w-3" />
+            AI VERIFIED
+          </span>
         </div>
-        <h1 className="fade-up text-4xl font-bold tracking-tight sm:text-6xl">
-          HillSense <span className="text-sky-400">AI</span>
-        </h1>
-        <p className="fade-up mx-auto mt-4 max-w-2xl text-lg font-medium text-[#c6d4e0] sm:text-xl">
-          AI-powered disaster intelligence for mountain communities
-        </p>
-        <p className="fade-up mx-auto mt-3 max-w-2xl text-[15px] leading-relaxed text-[#8ba1b7]">
-          Turn reports, images and voice messages into actionable incident intelligence —
-          grounded in a disaster-safety knowledge base, mapped, and ready to share.
-        </p>
-        <div className="fade-up mt-8 flex flex-wrap items-center justify-center gap-3">
-          <Link
-            href="/report"
-            className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-5 py-2.5 text-sm font-semibold text-[#06232f] transition hover:bg-sky-400"
-          >
-            <Siren className="h-4 w-4" />
-            Report an Incident
-          </Link>
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-2 rounded-lg border border-[#2c3e54] bg-[#141c25] px-5 py-2.5 text-sm font-semibold text-[#e6edf3] transition hover:border-sky-500/50"
-          >
-            <LayoutDashboard className="h-4 w-4" />
-            Open Command Center
-          </Link>
-        </div>
-      </section>
 
-      {/* How it works */}
-      <section className="mx-auto max-w-7xl px-4 py-14">
-        <h2 className="text-center text-2xl font-bold tracking-tight">How it works</h2>
-        <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {STEPS.map(({ n, title, desc, icon: Icon }) => (
-            <div key={n} className="panel panel-hover p-5">
-              <div className="flex items-center justify-between">
-                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500/15 ring-1 ring-sky-500/30">
-                  <Icon className="h-4.5 w-4.5 text-sky-400" />
-                </span>
-                <span className="font-mono text-xs text-[#4d6275]">0{n}</span>
-              </div>
-              <h3 className="mt-4 text-[15px] font-semibold">{title}</h3>
-              <p className="mt-1.5 text-[13px] leading-relaxed text-[#8ba1b7]">{desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+        {/* Summary */}
+        <p className="text-[14px] leading-relaxed">{i.summary}</p>
 
-      {/* Example scenario pipeline */}
-      <section className="mx-auto max-w-7xl px-4 py-14">
-        <div className="panel overflow-hidden">
-          <div className="border-b border-[#223041] bg-[#0d1218] px-5 py-3.5">
-            <h2 className="text-sm font-semibold tracking-wide text-[#c6d4e0]">
-              Example scenario — from message to mission-ready report
-            </h2>
-          </div>
-          <div className="grid gap-0 md:grid-cols-4">
-            {PIPELINE.map((p, i) => (
-              <div key={p.label} className="relative border-b border-[#223041] p-5 md:border-b-0 md:border-r md:last:border-r-0">
-                <div className="font-mono text-[10px] uppercase tracking-widest text-[#4d6275]">
-                  Step {i + 1}
-                </div>
-                <div className="mt-1 text-[13px] font-semibold">{p.label}</div>
-                <p className={`mt-2 text-[12.5px] leading-relaxed ${p.tone}`}>{p.value}</p>
-                {i < PIPELINE.length - 1 && (
-                  <ArrowRight className="absolute -right-2.5 top-1/2 z-10 hidden h-4 w-4 -translate-y-1/2 text-[#3b82c4] md:block" />
-                )}
-              </div>
+        {/* Metadata — consistent 12.5px row, icons never squashed */}
+        <div className="meta-row muted">
+          <span className="max-w-[46%] truncate" title={i.location}>
+            <MapPin className="h-3.5 w-3.5" />
+            {km != null ? `${fmtDistance(km)} · ${i.location}` : i.location}
+          </span>
+          <span>
+            <Clock className="h-3.5 w-3.5" />
+            Reported {fmtAge(minutesSince(i.created_at))}
+          </span>
+          <span>
+            <Radio className="h-3.5 w-3.5" />
+            {confirmLabel}
+          </span>
+          {i.origin === "seed" && (
+            <span className="chip chip-neutral ml-auto !text-[10.5px]">DEMO DATA</span>
+          )}
+        </div>
+      </Link>
+    </li>
+  );
+}
+
+export default function NearbyPage() {
+  const {
+    loc, busy: geoBusy, resolvingAddress, error: geoError, useMyLocation, pickPreset, setCustom,
+  } = useLocationPreference();
+  const { authed } = useAuth();
+  const [incidents, setIncidents] = useState<Incident[] | null>(null);
+  const [view, setView] = useState<"list" | "map">("list");
+  const [radius, setRadius] = useState(25);
+  const [customPlace, setCustomPlace] = useState("");
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      fetch("/api/incidents?public=1", { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => setIncidents(d.incidents ?? []))
+        .catch(() => setIncidents([]));
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Public feed = AI VERIFIED, publicly published alerts only.
+  const publicIncidents = useMemo(
+    () =>
+      (incidents ?? []).filter(
+        (i) => i.publication === "public" || (i.publication == null && i.verification !== "rejected" && i.verification !== "needs_review"),
+      ),
+    [incidents],
+  );
+
+  const locValid = Boolean(loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lng));
+
+  const nearby = useMemo(() => {
+    if (!locValid || !loc) return publicIncidents;
+    return publicIncidents
+      .map((i) => ({ i, km: haversineKm(loc.lat, loc.lng, i.lat, i.lng) }))
+      .filter(({ km }) => km <= radius)
+      .sort((a, b) => {
+        const rank = (s: string) => (s === "Critical" ? 0 : s === "High" ? 1 : s === "Moderate" ? 2 : 3);
+        return rank(a.i.severity) - rank(b.i.severity) || a.km - b.km;
+      })
+      .map(({ i }) => i);
+  }, [publicIncidents, loc, radius, locValid]);
+
+  const counts = useMemo(() => {
+    const active = publicIncidents.filter((i) => i.status !== "Resolved");
+    return {
+      total: active.length,
+      critical: active.filter((i) => i.severity === "Critical").length,
+      fresh: active.filter((i) => freshnessOf(i) === "fresh").length,
+    };
+  }, [publicIncidents]);
+
+  const statusLine = locValid && loc
+    ? `${loc.approximate ? `${loc.label} (approximate)` : loc.label} · ${counts.total} active public alert${counts.total === 1 ? "" : "s"}${counts.critical > 0 ? ` · ${counts.critical} critical` : ""}`
+    : loc
+      ? `Showing public alerts for “${loc.label}” — use your device location for distance filtering.`
+      : "Allow location access to see hazards near you.";
+
+  return (
+    <div className="container-page py-6 sm:py-8">
+      {/* ---- Heading row: title/status left, toggle + CTA right, one aligned row ---- */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-[22px] font-bold tracking-tight sm:text-2xl">Hazards near you</h1>
+          <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[13.5px] leading-relaxed muted">
+            <MapPin className="h-4 w-4 shrink-0" style={{ color: "var(--accent)" }} aria-hidden />
+            <span className="min-w-0">{statusLine}</span>
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="segmented" role="tablist" aria-label="View mode">
+            {(["list", "map"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                role="tab"
+                aria-selected={view === v}
+                onClick={() => setView(v)}
+                className="capitalize"
+              >
+                {v === "list" ? <List className="h-4 w-4" /> : <MapIcon className="h-4 w-4" />}
+                {v}
+              </button>
             ))}
           </div>
-        </div>
-      </section>
-
-      {/* AI capabilities */}
-      <section className="mx-auto max-w-7xl px-4 py-14">
-        <h2 className="text-center text-2xl font-bold tracking-tight">AI capabilities</h2>
-        <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {CAPABILITIES.map(({ icon: Icon, title, desc }) => (
-            <div key={title} className="panel panel-hover p-5">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500/15 ring-1 ring-sky-500/30">
-                <Icon className="h-4.5 w-4.5 text-sky-400" />
-              </span>
-              <h3 className="mt-4 text-[15px] font-semibold">{title}</h3>
-              <p className="mt-1.5 text-[13px] leading-relaxed text-[#8ba1b7]">{desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Bottom CTA */}
-      <section className="mx-auto max-w-7xl px-4 pb-20 pt-6">
-        <div className="panel flex flex-col items-center gap-4 px-6 py-10 text-center">
-          <Mountain className="h-6 w-6 text-sky-400" />
-          <h2 className="text-xl font-bold tracking-tight">
-            Human report → AI understanding → grounded knowledge → actionable response
-          </h2>
-          <p className="max-w-xl text-[13px] leading-relaxed text-[#8ba1b7]">
-            HillSense AI is a demonstration prototype. Outputs are decision support to help
-            organise information faster — always follow official instructions from your district
-            administration. In a life-threatening emergency, call 112.
-          </p>
-          <Link
-            href="/report"
-            className="mt-1 inline-flex items-center gap-2 rounded-lg bg-sky-500 px-5 py-2.5 text-sm font-semibold text-[#06232f] transition hover:bg-sky-400"
-          >
-            Try the live demo
-            <ArrowRight className="h-4 w-4" />
+          <Link href="/report" className="btn btn-primary">
+            <Siren className="h-4 w-4" aria-hidden />
+            Report Hazard
           </Link>
         </div>
+      </div>
+
+      {/* ---- Location controls: one row on desktop, clean wraps on mobile ---- */}
+      <section className="card mt-5 p-4" aria-label="Location and filter controls">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <button onClick={useMyLocation} disabled={geoBusy} className="btn btn-secondary shrink-0">
+            {geoBusy ? <Spinner className="h-4 w-4" /> : <LocateFixed className="h-4 w-4" aria-hidden />}
+            Use my location
+          </button>
+
+          {resolvingAddress && (
+            <span className="flex items-center gap-1.5 text-[12.5px] muted" role="status">
+              <Spinner className="h-3.5 w-3.5" /> Resolving address…
+            </span>
+          )}
+
+          <div className="flex flex-1 flex-wrap items-center gap-x-2 gap-y-2 sm:gap-x-3">
+            <span className="text-[13px] muted">or choose</span>
+            <select
+              className="input !w-auto min-w-[9.5rem]"
+              value={loc?.preset ?? ""}
+              onChange={(e) => pickPreset(e.target.value)}
+              aria-label="Choose location manually"
+            >
+              <option value="" disabled>choose a location…</option>
+              {PRESETS.map((p) => (
+                <option key={p.name} value={p.name}>{p.name}</option>
+              ))}
+            </select>
+
+            {locValid && (
+              <label className="flex items-center gap-2 sm:ml-auto">
+                <span className="text-[13px] muted">Radius</span>
+                <select
+                  className="input !w-auto min-w-[8.5rem]"
+                  value={radius}
+                  onChange={(e) => setRadius(Number(e.target.value))}
+                  aria-label="Search radius"
+                >
+                  <option value={10}>10 km</option>
+                  <option value={25}>25 km</option>
+                  <option value={50}>50 km</option>
+                  <option value={1000}>All of Himachal</option>
+                </select>
+              </label>
+            )}
+          </div>
+        </div>
+
+        {/* Resolved-address line (GPS) or manual-entry row — only when relevant */}
+        {loc && !loc.preset && (
+          <div className="mt-3 flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-center" style={{ borderColor: "var(--border)" }}>
+            <p className="min-w-0 flex-1 truncate text-[12.5px] muted" title={loc.label}>
+              <span style={{ color: "var(--text)" }}>{loc.label}</span>
+              {loc.approximate && " · approximate"}
+            </p>
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1 sm:w-64 sm:flex-none">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 faint" aria-hidden />
+                <input
+                  className="input !pl-8 text-[13px]"
+                  placeholder="Change by typing a place…"
+                  value={customPlace}
+                  onChange={(e) => setCustomPlace(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && customPlace.trim()) { setCustom(customPlace); setCustomPlace(""); } }}
+                  aria-label="Set location by name"
+                />
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm shrink-0"
+                disabled={!customPlace.trim()}
+                onClick={() => { if (customPlace.trim()) { setCustom(customPlace); setCustomPlace(""); } }}
+              >
+                Set
+              </button>
+            </div>
+          </div>
+        )}
+
+        {geoError && (
+          <p className="mt-3 border-t pt-3 text-[12.5px]" style={{ color: "var(--warn)", borderColor: "var(--border)" }} role="alert">
+            {geoError}
+          </p>
+        )}
       </section>
+
+      {/* ---- Feed ---- */}
+      {incidents === null ? (
+        <div className="card mt-4 flex h-64 items-center justify-center">
+          <Spinner className="h-6 w-6" />
+        </div>
+      ) : nearby.length === 0 ? (
+        <div className="card mt-4 px-6 py-12 text-center">
+          <ShieldCheck className="mx-auto h-8 w-8" style={{ color: "var(--low)" }} />
+          <p className="mt-3 text-[15px] font-semibold">No active hazards reported in this area</p>
+          <p className="mx-auto mt-1.5 max-w-md text-[13.5px] leading-relaxed muted">
+            {loc
+              ? "Nothing within your selected radius right now. Alerts appear here as soon as community reports are verified."
+              : "Choose a location to see verified public alerts, or report a hazard you have seen."}
+          </p>
+        </div>
+      ) : view === "map" ? (
+        <div className="card mt-4 p-3">
+          <IncidentMap incidents={nearby} userLoc={locValid && loc ? { lat: loc.lat, lng: loc.lng, label: loc.label } : null} />
+        </div>
+      ) : (
+        <ul className="mt-4 grid gap-3 sm:gap-4">
+          {nearby.map((i) => (
+            <HazardCard
+              key={i.id}
+              incident={i}
+              km={locValid && loc ? haversineKm(loc.lat, loc.lng, i.lat, i.lng) : null}
+            />
+          ))}
+        </ul>
+      )}
+
+      {/* ---- Bottom banners: one pattern, same width/padding/rhythm ---- */}
+      <div className="stack-lg mt-6">
+        {!authed && (
+          <div className="card banner">
+            <span className="banner-icon" style={{ background: "var(--accent-soft)" }}>
+              <LogIn className="h-4 w-4" style={{ color: "var(--accent)" }} />
+            </span>
+            <p className="min-w-0 flex-1 muted">
+              <strong style={{ color: "var(--text)" }}>Browsing is open to everyone.</strong> Sign in with
+              your phone number to report hazards, confirm alerts, and join the discussion.
+            </p>
+            <Link href="/login?next=/onboarding" className="btn btn-secondary btn-sm shrink-0 sm:!btn">
+              Sign in
+            </Link>
+          </div>
+        )}
+
+        <div className="card banner" style={{ background: "var(--danger-soft)", borderColor: "color-mix(in srgb, var(--danger) 22%, transparent)" }}>
+          <span className="banner-icon" style={{ background: "color-mix(in srgb, var(--danger) 14%, transparent)" }}>
+            <Phone className="h-4 w-4" style={{ color: "var(--danger)" }} />
+          </span>
+          <p className="min-w-0 muted">
+            <strong style={{ color: "var(--danger)" }}>In a life-threatening emergency, call 112.</strong>{" "}
+            HillSense shows community reports verified by AI for evidence consistency — it is decision
+            support, not an official alert channel. Always follow instructions from your district administration.
+          </p>
+        </div>
+
+        {nearby.length > 0 && nearby.some((i) => needsReconfirmation(i)) && (
+          <p className="flex items-center gap-1.5 px-1 text-[12px] faint">
+            Some alerts have not been reconfirmed recently — check the incident page before travelling.
+          </p>
+        )}
+      </div>
     </div>
   );
 }
+
+

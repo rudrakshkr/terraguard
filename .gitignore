@@ -41,6 +41,5 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# HillSense runtime data
-.hillsense-store.json
-.hillsense-incidents.json
+# HillSense runtime data (incidents, auth sessions, community votes)
+.hillsense-*.json

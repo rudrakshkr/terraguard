@@ -1,46 +1,137 @@
-import { SEVERITY_META, STATUS_META } from "@/lib/threat";
 import type { Severity } from "@/lib/types";
+import { confidenceBand } from "@/lib/threat";
 
-export function SeverityBadge({ severity }: { severity: Severity }) {
-  const s = SEVERITY_META[severity];
+export function SeverityChip({ severity }: { severity: Severity }) {
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${s.bg} ${s.text} ${s.ring}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
-      {severity}
+    <span className={`chip chip-${severity.toLowerCase()}`}>
+      <span className="dot" />
+      {severity.toUpperCase()}
     </span>
   );
 }
 
-export function StatusBadge({ status }: { status: string }) {
-  const m = STATUS_META[status] ?? { text: "text-[#8ba1b7]", bg: "bg-white/5", ring: "ring-white/10" };
+export function StatusChip({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    Open: "chip-critical",
+    Responding: "chip-warn",
+    Resolved: "chip-low",
+  };
+  const label = status === "Open" ? "ACTIVE" : status === "Responding" ? "RESPONDING" : "RESOLVED";
   return (
-    <span
-      className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ${m.bg} ${m.text} ${m.ring}`}
-    >
-      {status}
+    <span className={`chip ${map[status] ?? "chip-neutral"}`}>
+      <span className="dot" />
+      {label}
     </span>
   );
 }
 
-export function ModeBadge({ aiAvailable, grounded }: { aiAvailable: boolean; grounded?: boolean }) {
+export function VerificationChip({ verification }: { verification?: string }) {
+  if (verification === "verified")
+    return (
+      <span className="chip chip-low">
+        <span className="dot" />
+        AI VERIFIED
+      </span>
+    );
+  if (verification === "needs_review")
+    return (
+      <span className="chip chip-warn">
+        <span className="dot" />
+        NEEDS REVIEW
+      </span>
+    );
+  if (verification === "rejected")
+    return (
+      <span className="chip chip-critical">
+        <span className="dot" />
+        NOT PUBLISHED
+      </span>
+    );
+  return null;
+}
+
+/** Provenance chips for the demo dataset vs new community reports. */
+export function OriginChip({ origin }: { origin: string }) {
+  if (origin === "seed")
+    return (
+      <span className="chip chip-neutral" title="Seeded demonstration data — not a live report">
+        DEMO DATA
+      </span>
+    );
+  if (origin === "ai")
+    return (
+      <span className="chip chip-info" title="Submitted by a community member through HillSense">
+        NEW COMMUNITY REPORT
+      </span>
+    );
+  return null;
+}
+
+/** Assessment-confidence band, explicitly not a calibrated probability. */
+export function ConfidenceChip({
+  score,
+  heuristic,
+  needsVerification,
+  compact,
+}: {
+  score: number;
+  heuristic?: boolean;
+  needsVerification?: boolean;
+  /** For fixed-width grid cells where the "Assessment confidence:" prefix is
+   *  already provided by the section heading — renders just "Medium (heuristic)". */
+  compact?: boolean;
+}) {
+  const band = confidenceBand(score);
+  const cls = band === "High" ? "chip-low" : band === "Medium" ? "chip-info" : "chip-warn";
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ${
-        aiAvailable
-          ? grounded
-            ? "bg-emerald-500/10 text-emerald-300 ring-emerald-500/30"
-            : "bg-sky-500/10 text-sky-300 ring-sky-500/30"
-          : "bg-amber-500/10 text-amber-300 ring-amber-500/30"
-      }`}
+      className={`chip ${cls} !whitespace-normal`}
+      title={`Raw model score ${Math.round(score * 100)}/100, interpreted as ${band}. Not a calibrated probability.`}
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${aiAvailable ? "bg-current" : "bg-current"}`} />
-      {aiAvailable
-        ? grounded
-          ? "AI grounded in provided sources"
-          : "AI analysis"
-        : "Heuristic mode — no API key"}
+      {!compact && <>Assessment confidence: </>}
+      {band}
+      {heuristic ? " (heuristic)" : ""}
+      {needsVerification ? " · needs verification" : ""}
+    </span>
+  );
+}export function FreshnessChip({
+  fresh,
+  minsSinceConfirmed,
+}: {
+  fresh: "fresh" | "recent" | "stale";
+  minsSinceConfirmed: number;
+}) {
+  if (fresh === "fresh")
+    return (
+      <span className="chip chip-low">
+        <span className="dot" />
+        Last confirmed {minsSinceConfirmed < 1 ? "just now" : `${minsSinceConfirmed} min ago`}
+      </span>
+    );
+  if (fresh === "recent")
+    return (
+      <span className="chip chip-warn">
+        <span className="dot" />
+        Awaiting reconfirmation
+      </span>
+    );
+  return (
+    <span className="chip chip-critical">
+      <span className="dot" />
+      Needs reconfirmation
+    </span>
+  );
+}
+
+/** Which engine produced the current output — honest about heuristic mode. */
+export function ModeBadge({ aiAvailable }: { aiAvailable: boolean }) {
+  return aiAvailable ? (
+    <span className="chip chip-info" title="Live LLM (Gemini-compatible API) generated this assessment">
+      LLM connected
+    </span>
+  ) : (
+    <span className="chip chip-neutral" title="Running without an API key — deterministic rule-based fallback">
+      Heuristic mode (no AI)
     </span>
   );
 }

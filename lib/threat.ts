@@ -1,55 +1,8 @@
-import type { IncidentType, Severity } from "./types";
+import type { Severity } from "./types";
 
 export const SEVERITIES: Severity[] = ["Critical", "High", "Moderate", "Low"];
 
-export const SEVERITY_ORDER: Record<Severity, number> = {
-  Critical: 4,
-  High: 3,
-  Moderate: 2,
-  Low: 1,
-};
-
-export const SEVERITY_META: Record<
-  Severity,
-  { text: string; bg: string; ring: string; dot: string; hex: string }
-> = {
-  Critical: {
-    text: "text-red-400",
-    bg: "bg-red-500/10",
-    ring: "ring-red-500/40",
-    dot: "bg-red-500",
-    hex: "#ef4444",
-  },
-  High: {
-    text: "text-amber-400",
-    bg: "bg-amber-500/10",
-    ring: "ring-amber-500/40",
-    dot: "bg-amber-500",
-    hex: "#f59e0b",
-  },
-  Moderate: {
-    text: "text-sky-400",
-    bg: "bg-sky-500/10",
-    ring: "ring-sky-500/40",
-    dot: "bg-sky-500",
-    hex: "#38bdf8",
-  },
-  Low: {
-    text: "text-emerald-400",
-    bg: "bg-emerald-500/10",
-    ring: "ring-emerald-500/40",
-    dot: "bg-emerald-500",
-    hex: "#22c55e",
-  },
-};
-
-export const STATUS_META: Record<string, { text: string; bg: string; ring: string }> = {
-  Open: { text: "text-red-300", bg: "bg-red-500/10", ring: "ring-red-500/30" },
-  Responding: { text: "text-amber-300", bg: "bg-amber-500/10", ring: "ring-amber-500/30" },
-  Resolved: { text: "text-emerald-300", bg: "bg-emerald-500/10", ring: "ring-emerald-500/30" },
-};
-
-export const INCIDENT_TYPES: IncidentType[] = [
+export const INCIDENT_TYPES = [
   "Landslide",
   "Rockfall",
   "Flood",
@@ -59,10 +12,9 @@ export const INCIDENT_TYPES: IncidentType[] = [
   "Forest Fire",
   "Avalanche",
   "Other",
-];
+] as const;
 
-/** Seeded Himachal Pradesh locations for the map + report form. */
-export const LOCATIONS: { name: string; lat: number; lng: number }[] = [
+export const LOCATIONS = [
   { name: "Shimla", lat: 31.1048, lng: 77.1734 },
   { name: "Manali", lat: 32.2432, lng: 77.1892 },
   { name: "Kullu", lat: 31.9578, lng: 77.1095 },
@@ -73,16 +25,25 @@ export const LOCATIONS: { name: string; lat: number; lng: number }[] = [
   { name: "Solan", lat: 30.9045, lng: 77.0967 },
 ];
 
-export function coordsFor(location: string): { lat: number; lng: number } {
-  const hit = LOCATIONS.find(
-    (l) => l.name.toLowerCase() === location.trim().toLowerCase(),
-  );
-  // Unknown/custom locations fall back to the Himachal centre of the map.
-  return hit ?? { lat: 31.9, lng: 77.1 };
+/**
+ * Interpret the raw model score as a band. We deliberately do NOT present the
+ * LLM's self-reported number as a calibrated probability.
+ */
+export function confidenceBand(n: number): "High" | "Medium" | "Low" {
+  if (n >= 0.8) return "High";
+  if (n >= 0.6) return "Medium";
+  return "Low";
 }
 
-export function severityRank(s: Severity): number {
-  return SEVERITY_ORDER[s] ?? 0;
+/** Visible provenance metadata for the three origins. */
+export const ORIGIN_META: Record<string, { label: string; title: string }> = {
+  seed: { label: "DEMO DATA", title: "Seeded demonstration incident — not a live report" },
+  ai: { label: "NEW COMMUNITY REPORT", title: "Submitted by a community member through HillSense" },
+  manual: { label: "COMMUNITY REPORT", title: "Manually recorded incident" },
+};
+
+export function originMeta(origin: string) {
+  return ORIGIN_META[origin] ?? ORIGIN_META.manual;
 }
 
 export function timeAgo(iso: string): string {

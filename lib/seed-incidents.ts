@@ -128,6 +128,33 @@ const SEEDS: Seed[] = [
     sources: [{ title: "Road Blockage Response" }, { title: "Mountain Travel Safety" }],
   },
   {
+    ageMins: 75,
+    location: "Mandi",
+    lat: 31.725,
+    lng: 76.955,
+    incident_type: "Road Blockage",
+    severity: "Moderate",
+    status: "Open",
+    description:
+      "Debris and slush washing onto the Mandi–Jogindernagar road after continuous rain; traffic crawling on a single lane near the bridge.",
+    summary:
+      "Rain-washed debris narrowing the Mandi–Jogindernagar road near the bridge; one-lane traffic.",
+    confidence: 0.79,
+    risk_factors: [
+      "Continued rain feeding more slush onto the carriageway",
+      "Narrow bridge approach limiting passing traffic",
+    ],
+    immediate_actions: [
+      "Place cones and warning markers at the approach",
+      "Inform highway authorities for debris clearance",
+    ],
+    avoid: ["Do not overtake at the bridge approach", "Avoid stopping in the slush line"],
+    recommended_response:
+      "Deploy a clearance crew during a rain break and reassess the slope above the road.",
+    requires_urgent_attention: false,
+    sources: [{ title: "Road Blockage Response" }],
+  },
+  {
     ageMins: 240,
     location: "Shimla",
     lat: 31.087,
@@ -195,7 +222,12 @@ const SEEDS: Seed[] = [
   },
 ];
 
-/** Seed incidents for first boot. Ages are relative to first-run time. */
+/**
+ * Seed incidents for first boot. Ages are relative to first-run time.
+ * All seeds are published demonstration data: verified, public, marked DEMO DATA.
+ * The three Mandi-area rows (20, 75 & 160 min) intentionally form a small
+ * cluster for the "AI-detected incident cluster" demo.
+ */
 export function seedIncidents(): Incident[] {
   return SEEDS.map((s, i) => {
     const { ageMins, ...rest } = s;
@@ -204,6 +236,17 @@ export function seedIncidents(): Incident[] {
       id: `HS-${String(1000 + i)}`,
       created_at: minsAgo(ageMins),
       origin: "seed" as const,
+      verification: "verified" as const,
+      verification_reasons: [
+        "Demonstration seed — sample evidence prepared for the Engineering Day demo",
+        "Severity assessment consistent with the reported description",
+      ],
+      publication: "public" as const,
+      reporter_label: "Demo dataset",
+      last_confirmed_at: minsAgo(Math.min(10, ageMins)),
+      confirmations_yes: 0,
+      confirmations_no: 0,
+      status_history: [{ status: rest.status, at: minsAgo(ageMins) }],
     };
   });
 }

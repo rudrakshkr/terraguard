@@ -1,16 +1,24 @@
 "use client";
 
 import { useEffect } from "react";
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { SEVERITY_META } from "@/lib/threat";
+import { haversineKm, fmtDistance, fmtAge, minutesSince } from "@/lib/geo";
+import { originMeta } from "@/lib/threat";
 import type { Incident } from "@/lib/types";
 
 const HIMACHAL_CENTER: [number, number] = [31.9, 77.1];
 
+const SEV_HEX: Record<string, string> = {
+  Critical: "#dc2626",
+  High: "#ea580c",
+  Moderate: "#ca8a04",
+  Low: "#16a34a",
+};
+
 function dotIcon(severity: Incident["severity"], active: boolean) {
-  const hex = SEVERITY_META[severity].hex;
+  const hex = SEV_HEX[severity] ?? "#64748b";
   return L.divIcon({
     className: "",
     html: `<span class="marker-dot ${active ? "is-active" : ""}" style="display:block;width:14px;height:14px;background:${hex}"></span>`,
@@ -20,59 +28,112 @@ function dotIcon(severity: Incident["severity"], active: boolean) {
   });
 }
 
-function FitBounds({ incidents }: { incidents: Incident[] }) {
+function userIcon() {
+  return L.divIcon({
+    className: "",
+    html: `<span class="user-dot" style="display:block;width:16px;height:16px"></span>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  });
+}
+
+function FitBounds({
+  incidents,
+  userLoc,
+}: {
+  incidents: Incident[];
+  userLoc: { lat: number; lng: number } | null;
+}) {
   const map = useMap();
   useEffect(() => {
-    if (incidents.length > 1) {
-      const bounds = L.latLngBounds(incidents.map((i) => [i.lat, i.lng] as [number, number]));
-      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 10 });
-    } else if (incidents.length === 1) {
-      map.setView([incidents[0].lat, incidents[0].lng], 11);
+    const pts: [number, number][] = [
+      ...incidents.map((i) => [i.lat, i.lng] as [number, number]),
+      ...(userLoc ? [[userLoc.lat, userLoc.lng] as [number, number]] : []),
+    ];
+    if (pts.length > 1) {
+      map.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 12 });
+    } else if (pts.length === 1) {
+      map.setView(pts[0], 11);
     }
-  }, [incidents, map]);
+  }, [incidents, userLoc, map]);
   return null;
 }
 
-export default function IncidentMap({ incidents }: { incidents: Incident[] }) {
+export default function IncidentMap({
+  incidents,
+  userLoc,
+}: {
+  incidents: Incident[];
+  userLoc?: { lat: number; lng: number; label?: string } | null;
+}) {
+  const shownUser = userLoc ?? null;
   return (
-    <div className="h-[420px] w-full overflow-hidden rounded-lg border border-[#223041]">
-      <MapContainer
-        center={HIMACHAL_CENTER}
-        zoom={8}
-        scrollWheelZoom
-        style={{ height: "100%", width: "100%" }}
-      >
+    <div className="h-[380px] w-full overflow-hidden rounded-lg border" style={{ borderColor: "var(--border)" }}>
+      <MapContainer center={HIMACHAL_CENTER} zoom={8} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <FitBounds incidents={incidents} />
-        {incidents.map((i) => (
-          <Marker key={i.id} position={[i.lat, i.lng]} icon={dotIcon(i.severity, i.status === "Open" && i.severity === "Critical")}>
-            <Popup>
-              <div style={{ minWidth: 220 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                  <span
-                    className="marker-dot"
-                    style={{ display: "inline-block", width: 10, height: 10, background: SEVERITY_META[i.severity].hex }}
-                  />
-                  <strong style={{ fontSize: 13 }}>{i.incident_type}</strong>
-                  <span style={{ fontSize: 11, opacity: 0.75 }}>· {i.severity}</span>
+        <FitBounds incidents={incidents} userLoc={shownUser} />
+
+        {shownUser && (
+          <>
+            <Marker position={[shownUser.lat, shownUser.lng]} icon={userIcon()} aria-label="Your location">
+              <Popup>{shownUser.label ?? "Your location"}</Popup>
+            </Marker>
+            <Circle
+              center={[shownUser.lat, shownUser.lng]}
+              radius={10000}
+              pathOptions={{ color: "#0e7490", weight: 1, fillOpacity: 0.04 }}
+            />
+          </>
+        )}
+
+        {incidents.map((i) => {
+          const km = shownUser ? haversineKm(shownUser.lat, shownUser.lng, i.lat, i.lng) : null;
+          return (
+            <Marker
+              key={i.id}
+              position={[i.lat, i.lng]}
+              icon={dotIcon(i.severity, i.status === "Open" && (i.severity === "Critical" || i.severity === "High"))}
+              aria-label={`${i.incident_type} — ${i.severity}`}
+            >
+              <Popup>
+                <div style={{ minWidth: 230 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                    <span
+                      className="marker-dot"
+                      style={{ display: "inline-block", width: 10, height: 10, background: SEV_HEX[i.severity] }}
+                    />
+                    <strong style={{ fontSize: 13 }}>{i.incident_type}</strong>
+                    <span style={{ fontSize: 11, opacity: 0.75 }}>{i.severity}</span>
+                  </div>
+                  <div style={{ fontSize: 10.5, marginBottom: 6 }}>
+                    <span
+                      style={{
+                        background: i.origin === "seed" ? "rgba(202,138,4,0.15)" : "rgba(14,116,144,0.12)",
+                        color: i.origin === "seed" ? "#a16207" : "#0e7490",
+                        borderRadius: 999,
+                        padding: "1px 8px",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {originMeta(i.origin).label}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, lineHeight: 1.45, marginBottom: 6 }}>{i.summary}</div>
+                  <div style={{ fontSize: 11, opacity: 0.75, marginBottom: 6 }}>
+                    {km != null ? `${fmtDistance(km)} · ` : ""}
+                    reported {fmtAge(minutesSince(i.created_at))} · {i.status}
+                  </div>
+                  <a href={`/incident/${i.id}`} style={{ fontSize: 12, color: "#0e7490", fontWeight: 600 }}>
+                    View details →
+                  </a>
                 </div>
-                <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 6 }}>
-                  {i.id} · {i.location} · {i.status}
-                </div>
-                <div style={{ fontSize: 12, lineHeight: 1.45 }}>{i.summary}</div>
-                <a
-                  href={`/report/${i.id}`}
-                  style={{ display: "inline-block", marginTop: 8, fontSize: 12, color: "#38bdf8", fontWeight: 600 }}
-                >
-                  Open incident report →
-                </a>
-              </div>
-            </Popup>
-          </Marker>
-        ))}
+              </Popup>
+            </Marker>
+          );
+        })}
       </MapContainer>
     </div>
   );

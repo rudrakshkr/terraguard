@@ -1,9 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import {
-  MessageCircleQuestion, SendHorizontal, RotateCcw, BookOpenCheck, AlertTriangle,
-} from "lucide-react";
+import { SendHorizontal, RotateCcw, BookOpenCheck, AlertTriangle, Phone } from "lucide-react";
 import type { RagAnswer, RagSource } from "@/lib/types";
 import SourcesPanel from "@/components/SourcesPanel";
 import { Spinner } from "@/components/Spinner";
@@ -44,10 +42,7 @@ export default function AskPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setTurns((t) => [
-          ...t.slice(0, -1),
-          { q: query, a: null, error: typeof data.error === "string" ? data.error : "Ask failed. Please try again." },
-        ]);
+        setTurns((t) => [...t.slice(0, -1), { q: query, a: null, error: typeof data.error === "string" ? data.error : "Ask failed. Please try again." }]);
       } else {
         const answer = data as RagAnswer;
         setTurns((t) => [...t.slice(0, -1), { q: query, a: answer }]);
@@ -55,10 +50,7 @@ export default function AskPage() {
         setLastGrounded(answer.aiAvailable);
       }
     } catch {
-      setTurns((t) => [
-        ...t.slice(0, -1),
-        { q: query, a: null, error: "Could not reach the Ask service. Check your connection." },
-      ]);
+      setTurns((t) => [...t.slice(0, -1), { q: query, a: null, error: "Could not reach the Ask service. Check your connection." }]);
     } finally {
       setBusy(false);
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
@@ -66,114 +58,104 @@ export default function AskPage() {
   };
 
   return (
-    <div className="topo min-h-screen">
-      <div className="mx-auto max-w-4xl px-4 py-8">
-        <div className="mb-6">
-          <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight">
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500/15 ring-1 ring-sky-500/40">
-              <MessageCircleQuestion className="h-4.5 w-4.5 text-sky-400" />
-            </span>
-            Ask HillSense
-          </h1>
-          <p className="mt-2 text-[13.5px] text-[#8ba1b7]">
-            Disaster-safety questions answered from the HillSense knowledge base — every answer
-            shows the sources it was grounded in.
-          </p>
-        </div>
+    <div className="container-page mx-auto max-w-4xl py-6 sm:py-8">
+      <div className="mb-6">
+        <h1 className="text-[22px] font-bold tracking-tight sm:text-2xl">Ask HillSense</h1>
+        <p className="mt-1.5 text-[14px] leading-relaxed muted">
+          Mountain-safety questions answered from the HillSense knowledge base — every answer shows
+          the sources it was grounded in.
+        </p>
+      </div>
 
-        {/* Suggested questions */}
-        {turns.length === 0 && (
-          <div className="mb-6 grid gap-2.5 sm:grid-cols-2">
-            {SUGGESTIONS.map((s) => (
-              <button
-                key={s}
-                onClick={() => ask(s)}
-                className="panel-hover rounded-lg border border-[#223041] bg-[#0d1218] p-3.5 text-left text-[13px] text-[#c6d4e0]"
-              >
-                “{s}”
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Conversation */}
-        <div className="space-y-4">
-          {turns.map((t, i) => (
-            <div key={i} className="space-y-3">
-              <div className="flex justify-end">
-                <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-sky-500/15 px-4 py-2.5 text-[13.5px] text-[#e6edf3] ring-1 ring-sky-500/30">
-                  {t.q}
-                </div>
-              </div>
-              {t.error ? (
-                <div className="panel flex items-start gap-2 p-4 text-[13px] text-red-300">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  {t.error}
-                </div>
-              ) : t.a ? (
-                <div className="panel fade-up p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <BookOpenCheck className="h-4 w-4 text-emerald-400" />
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
-                      {t.a.aiAvailable ? "Grounded answer" : "Knowledge-base passages"}
-                    </span>
-                  </div>
-                  <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-[#e6edf3]">
-                    {t.a.answer}
-                  </p>
-                </div>
-              ) : (
-                <div className="panel flex items-center gap-2.5 p-4 text-[13px] text-[#8ba1b7]">
-                  <Spinner /> Retrieving knowledge and composing an answer…
-                </div>
-              )}
-            </div>
-          ))}
-          <div ref={bottomRef} />
-        </div>
-
-        {/* Sources for the latest answer */}
-        {turns.length > 0 && lastSources.length > 0 && (
-          <div className="mt-6">
-            <SourcesPanel sources={lastSources} grounded={lastGrounded} />
-          </div>
-        )}
-
-        {/* Input */}
-        <div className="sticky bottom-4 mt-6">
-          <form
-            onSubmit={(e) => { e.preventDefault(); ask(question); }}
-            className="panel flex items-center gap-2 p-2 shadow-lg shadow-black/40"
-          >
-            <input
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              placeholder="Ask about landslide signs, flash floods, evacuation…"
-              className="flex-1 bg-transparent px-3 py-2 text-[13.5px] text-[#e6edf3] placeholder:text-[#4d6275] focus:outline-none"
-            />
-            {turns.length > 0 && (
-              <button
-                type="button"
-                onClick={() => { setTurns([]); setLastSources([]); setLastGrounded(undefined); }}
-                title="Clear conversation"
-                className="rounded-lg p-2 text-[#8ba1b7] hover:bg-[#1c2836] hover:text-white"
-              >
-                <RotateCcw className="h-4 w-4" />
-              </button>
-            )}
+      {turns.length === 0 && (
+        <div className="mb-6 grid gap-2.5 sm:grid-cols-2">
+          {SUGGESTIONS.map((s) => (
             <button
-              type="submit"
-              disabled={busy || !question.trim()}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-sky-500 px-3.5 py-2 text-[13px] font-semibold text-[#06232f] hover:bg-sky-400 disabled:opacity-40"
+              key={s}
+              onClick={() => ask(s)}
+              className="card p-3.5 text-left text-[13px] transition hover:border-[var(--accent)]"
             >
-              {busy ? <Spinner className="h-3.5 w-3.5" /> : <SendHorizontal className="h-4 w-4" />}
-              Ask
+              “{s}”
             </button>
-          </form>
-          <p className="mt-2 text-center text-[11px] text-[#4d6275]">
-            Decision support only — in a life-threatening emergency call 112.
-          </p>
+          ))}
         </div>
+      )}
+
+      <div className="space-y-4">
+        {turns.map((t, i) => (
+          <div key={i} className="space-y-3">
+            <div className="flex justify-end">
+              <div
+                className="max-w-[85%] rounded-2xl rounded-br-sm px-4 py-2.5 text-[13.5px]"
+                style={{ background: "var(--accent-soft)", color: "var(--text)" }}
+              >
+                {t.q}
+              </div>
+            </div>
+            {t.error ? (
+              <div className="card flex items-start gap-2 p-4 text-[13px]" style={{ color: "var(--danger)" }}>
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                {t.error}
+              </div>
+            ) : t.a ? (
+              <div className="card fade-up p-4">
+                <div className="mb-2 flex items-center gap-2">
+                  <BookOpenCheck className="h-4 w-4" style={{ color: "var(--low)" }} />
+                  <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--low)" }}>
+                    {t.a.aiAvailable ? "Grounded answer" : "Knowledge-base passages"}
+                  </span>
+                </div>
+                <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed">{t.a.answer}</p>
+              </div>
+            ) : (
+              <div className="card flex items-center gap-2.5 p-4 text-[13px] muted">
+                <Spinner /> Retrieving knowledge and composing an answer…
+              </div>
+            )}
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+
+      {turns.length > 0 && lastSources.length > 0 && (
+        <div className="mt-6">
+          <SourcesPanel sources={lastSources} grounded={lastGrounded} />
+        </div>
+      )}
+
+      <div className="sticky bottom-4 mt-6">
+        <form
+          onSubmit={(e) => { e.preventDefault(); ask(question); }}
+          className="card flex items-center gap-2 p-2 shadow-lg"
+          style={{ boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}
+        >
+          <input
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder="Ask about landslide signs, flash floods, evacuation…"
+            className="flex-1 bg-transparent px-3 py-2 text-[13.5px] focus:outline-none"
+            style={{ color: "var(--text)" }}
+            aria-label="Your question"
+          />
+          {turns.length > 0 && (
+            <button
+              type="button"
+              onClick={() => { setTurns([]); setLastSources([]); setLastGrounded(undefined); }}
+              title="Clear conversation"
+              aria-label="Clear conversation"
+              className="btn btn-ghost !px-2"
+            >
+              <RotateCcw className="h-4 w-4" />
+            </button>
+          )}
+          <button type="submit" disabled={busy || !question.trim()} className="btn btn-primary">
+            {busy ? <Spinner className="h-3.5 w-3.5" /> : <SendHorizontal className="h-4 w-4" />}
+            Ask
+          </button>
+        </form>
+        <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-[11px] faint">
+          <Phone className="h-3 w-3" /> Decision support only — in a life-threatening emergency call 112.
+        </p>
       </div>
     </div>
   );

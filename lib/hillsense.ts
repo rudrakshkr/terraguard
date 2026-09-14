@@ -15,7 +15,16 @@
 import { chatJSON, chatText, aiAvailable } from "./llm";
 import { heuristicAnalysis } from "./fallback";
 import { retrieve, contextBlock, type RagHit } from "./rag";
-import type { IncidentAnalysis, IncidentType, RagAnswer, Severity } from "./types";
+import { verifyReport, type VerificationResult } from "./verification";
+import { listIncidents } from "./store";
+import type {
+  EvidenceLink,
+  IncidentAnalysis,
+  IncidentType,
+  PipelineTimings,
+  RagAnswer,
+  Severity,
+} from "./types";
 
 const VALID_TYPES: IncidentType[] = [
   "Landslide", "Rockfall", "Flood", "Flash Flood", "Road Blockage",
@@ -33,8 +42,13 @@ Classify the user's report (text, and image if provided) into JSON with EXACTLY 
   "confidence": number 0..1 (your classification confidence),
   "summary": one or two sentence factual summary of the situation,
   "risk_factors": array of 2-5 short strings describing current or imminent dangers,
+  "severity_reasons": array of 2-5 short strings, each a concrete observed fact that justifies the severity (e.g. "road fully blocked", "people exposed at the site"),
+  "needs_verification": boolean — true when evidence is weak, the image is unclear, or text and image contradict each other; in that case avoid a confident severity call,
+  "verification_note": short string explaining what needs on-site verification (only when needs_verification is true),
   "requires_urgent_attention": boolean (true for Critical or life-threatening situations)
 }
+
+If the report includes an image, also judge consistency: when the image does NOT show the hazard described in the text, set confidence below 0.4, set needs_verification to true, and explain the mismatch in verification_note.
 
 Severity guide:
 - Critical: people trapped/injured/missing, structural collapse, violent flash flood, fire near habitation
@@ -43,6 +57,8 @@ Severity guide:
 - Low: minor events, passable hazards, informational reports
 
 If the image shows a hazard scene, weigh what is visible (debris extent, water level, fire line, damage) together with the text. If text and image disagree, prefer the image and lower confidence.
+
+The "summary" field must describe the situation in the reporter's own words — never restate the REPORTER-PROVIDED DETAILS (hazard type, when, affected, etc.) inside the summary.
 
 Respond with JSON only.`;
 
@@ -85,6 +101,7 @@ function coerceAnalysis(raw: unknown, text: string): IncidentAnalysis | null {
     Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : [];
 
   const confidence = typeof r.confidence === "number" ? Math.min(1, Math.max(0, r.confidence)) : 0.6;
+  const needsVerification = r.needs_verification === true;
 
   return {
     incident_type: type,
@@ -99,42 +116,175 @@ function coerceAnalysis(raw: unknown, text: string): IncidentAnalysis | null {
       typeof r.requires_urgent_attention === "boolean"
         ? r.requires_urgent_attention
         : severity === "Critical" || severity === "High",
+    severity_reasons: strArr(r.severity_reasons),
+    needs_verification: needsVerification,
+    ...(needsVerification && typeof r.verification_note === "string"
+      ? { verification_note: r.verification_note }
+      : {}),
   };
+}
+
+/** Incident-specific retrieval queries — far better than a generic safety query. */
+const TYPE_QUERIES: Record<IncidentType, string> = {
+  Landslide: "landslide warning signs slope movement debris immediate actions",
+  Rockfall: "rockfall falling rocks road secondary falls clearance safety",
+  "Flash Flood": "flash flood rising river water high ground camping safety",
+  Flood: "flood waterlogging safety evacuation submerged roads",
+  "Road Blockage": "road blockage clearance stranded travellers machinery safety",
+  "Building Damage": "building damage structural cracks evacuation assessment",
+  "Forest Fire": "forest fire wildfire spread evacuation wind control lines",
+  Avalanche: "avalanche snow slope closure runout zone safety",
+  Other: "disaster safety preparedness reporting emergency",
+};
+
+function buildRagQuery(a: { incident_type: IncidentType; summary: string; risk_factors: string[] }, reportText: string): string {
+  const parts = [TYPE_QUERIES[a.incident_type]];
+  const context = (reportText.trim() || a.summary || "").trim();
+  if (context) parts.push(context.slice(0, 240));
+  return parts.join(" ");
+}
+
+/**
+ * Pair each key recommendation with the retrieved passages whose wording
+ * supports it (lexical overlap). Purely presentation-level attribution.
+ */
+function linkEvidence(analysis: IncidentAnalysis, sources: RagHit[]): EvidenceLink[] {
+  const claims = [
+    ...analysis.immediate_actions.slice(0, 4),
+    ...(analysis.recommended_response ? [analysis.recommended_response] : []),
+  ];
+  return claims
+    .map((claim) => {
+      const words = new Set(
+        claim
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, " ")
+          .split(/\s+/)
+          .filter((w) => w.length > 4),
+      );
+      const refs: number[] = [];
+      sources.forEach((s, i) => {
+        const hay = `${s.title} ${s.excerpt}`.toLowerCase();
+        let overlap = 0;
+        for (const w of words) if (hay.includes(w)) overlap++;
+        if (overlap >= 2) refs.push(i);
+      });
+      return { claim, refs: refs.slice(0, 2) };
+    })
+    .filter((e) => e.refs.length > 0);
 }
 
 export interface AnalyzeInput {
   text: string;
   imageBase64?: string | null; // data URL or raw base64
+  /** Structured reporter context (hazard type, when, affected, observations…). */
+  context?: string;
+  /** Reporter-declared hazard type, used for type-consistency checks. */
+  hazardType?: string;
+  /** Reporter coordinates, used for location checks. */
+  location?: { lat: number; lng: number };
   k?: number; // RAG hits to retrieve
 }
 
 export interface AnalyzeResult {
   analysis: IncidentAnalysis;
   sources: RagHit[];
+  evidence: EvidenceLink[];
   aiAvailable: boolean;
   grounded: boolean;
+  query_used: string;
+  timings: PipelineTimings;
+  verification: VerificationResult;
 }
 
-/** Full incident pipeline: retrieve → classify → ground → merge. */
+/** Find active incidents near the new report for duplicate/corroboration checks. */
+async function nearbyContext(input: { location?: { lat: number; lng: number }; hazardType?: string }): Promise<
+  { incident: import("./types").Incident; distanceKm: number; minutesApart: number }[]
+> {
+  try {
+    const all = await listIncidents();
+    const now = Date.now();
+    return all
+      .filter((i) => i.status !== "Resolved" && i.verification !== "rejected")
+      .map((i) => ({
+        incident: i,
+        distanceKm:
+          input.location
+            ? Math.hypot((i.lat - (input.location.lat ?? 0)) * 111, (i.lng - (input.location.lng ?? 0)) * 91)
+            : 999,
+        minutesApart: Math.abs(now - new Date(i.created_at).getTime()) / 60000,
+      }))
+      .filter((r) => r.distanceKm <= 10 && r.minutesApart <= 24 * 60)
+      .sort((a, b) => a.distanceKm - b.distanceKm)
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Full incident pipeline (v2):
+ *   input → multimodal classification → query construction
+ *   → incident-specific RAG retrieval → grounded recommendations → merge
+ *
+ * Retrieval happens AFTER classification so image-only reports get
+ * incident-specific guidance instead of generic "mountain disaster safety".
+ */
 export async function analyzeIncident(input: AnalyzeInput): Promise<AnalyzeResult> {
+  const t0 = Date.now();
   const text = (input.text || "").trim();
   const hasImage = Boolean(input.imageBase64);
   const k = input.k ?? 4;
+  const timings: PipelineTimings = { totalMs: 0 };
 
-  // 1. RAG retrieval (always runs — also powers the sources panel).
-  const { hits } = await retrieve(text || "mountain disaster safety", k);
+  // Enriched text: description + structured reporter context.
+  const fullText = [text, input.context].filter(Boolean).join("\n\n");
 
-  // 2. Heuristic baseline — always available, replaced by AI when possible.
-  const base = heuristicAnalysis(text, hasImage);
+  // 1. Heuristic baseline — always available, replaced by AI when possible.
+  //    Classification may consider the structured context (it contains useful
+  //    hazard keywords), but the SUMMARY must stay in the reporter's own words.
+  const base = heuristicAnalysis(fullText, hasImage);
+  if (text) base.summary = text.slice(0, 220);
+  else if (hasImage) base.summary = `${base.incident_type} reported with image evidence.`;
+  const nearby = await nearbyContext(input);
+
+  const runVerification = (analysis: IncidentAnalysis, ai: boolean): VerificationResult =>
+    verifyReport({
+      analysis,
+      aiAvailable: ai,
+      hasImage,
+      hasText: Boolean(text),
+      hazardType: input.hazardType,
+      context: input.context,
+      location: input.location,
+      nearby,
+    });
+
   if (!aiAvailable()) {
-    return { analysis: base, sources: hits, aiAvailable: false, grounded: false };
+    // Heuristic mode: retrieve with the rule-matched type + report text.
+    const r0 = Date.now();
+    const query = buildRagQuery(base, fullText);
+    const { hits } = await retrieve(query, k);
+    timings.retrievalMs = Date.now() - r0;
+    timings.totalMs = Date.now() - t0;
+    return {
+      analysis: base,
+      sources: hits,
+      evidence: linkEvidence(base, hits),
+      aiAvailable: false,
+      grounded: false,
+      query_used: query,
+      timings,
+      verification: runVerification(base, false),
+    };
   }
 
-  // 3. Multimodal classification pass.
+  // 2. Multimodal classification pass.
   const userContent: string = [
     text ? `REPORT: ${text}` : "REPORT: (no text provided, image only)",
+    input.context ? `REPORTER-PROVIDED DETAILS:\n${input.context}` : "",
     "Classify this report now as JSON.",
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 
   const parts: ({ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } })[] = [
     { type: "text", text: userContent },
@@ -154,10 +304,32 @@ export async function analyzeIncident(input: AnalyzeInput): Promise<AnalyzeResul
   const classification = coerceAnalysis(classified, text);
   if (!classification) {
     // LLM failed or returned unusable JSON — deterministic fallback keeps demo alive.
-    return { analysis: base, sources: hits, aiAvailable: false, grounded: false };
+    const r0 = Date.now();
+    const query = buildRagQuery(base, fullText);
+    const { hits } = await retrieve(query, k);
+    timings.retrievalMs = Date.now() - r0;
+    timings.totalMs = Date.now() - t0;
+    return {
+      analysis: base,
+      sources: hits,
+      evidence: linkEvidence(base, hits),
+      aiAvailable: false,
+      grounded: false,
+      query_used: query,
+      timings,
+      verification: runVerification(base, false),
+    };
   }
+  timings.classificationMs = Date.now() - t0;
 
-  // 4. Grounded recommendation pass (only if AI is alive).
+  // 3. Construct an incident-specific RAG query FROM the classification.
+  const r0 = Date.now();
+  const query = buildRagQuery(classification, fullText);
+  const { hits } = await retrieve(query, k);
+  timings.retrievalMs = Date.now() - r0;
+
+  // 4. Grounded recommendation pass.
+  const g0 = Date.now();
   let actions = {
     immediate_actions: base.immediate_actions,
     avoid: base.avoid,
@@ -180,6 +352,7 @@ export async function analyzeIncident(input: AnalyzeInput): Promise<AnalyzeResul
           `INCIDENT: type=${classification.incident_type}, severity=${classification.severity}`,
           `Summary: ${classification.summary}`,
           `Risk factors: ${classification.risk_factors.join("; ")}`,
+          `Evidence supporting severity: ${classification.severity_reasons?.join("; ") ?? "n/a"}`,
           "",
           "Produce the grounded actions JSON now.",
         ].join("\n"),
@@ -205,12 +378,30 @@ export async function analyzeIncident(input: AnalyzeInput): Promise<AnalyzeResul
       }
     }
   }
+  timings.groundingMs = Date.now() - g0;
+  timings.totalMs = Date.now() - t0;
+
+  // Low model confidence should also trigger the verification flag.
+  const needsVerification = classification.needs_verification || classification.confidence < 0.5;
+
+  const analysis: IncidentAnalysis = {
+    ...classification,
+    ...actions,
+    needs_verification: needsVerification,
+    ...(needsVerification && !classification.verification_note
+      ? { verification_note: "Model confidence was low — verify on site or request confirmation from a second reporter." }
+      : {}),
+  };
 
   return {
-    analysis: { ...classification, ...actions },
+    analysis,
     sources: hits,
+    evidence: linkEvidence(analysis, hits),
     aiAvailable: true,
     grounded,
+    query_used: query,
+    timings,
+    verification: runVerification(analysis, true),
   };
 }
 
@@ -254,7 +445,7 @@ export async function askHillSense(question: string): Promise<RagAnswer> {
         ? `The language model could not be reached. Relevant knowledge-base passages for your question:\n\n${hits
             .slice(0, 3)
             .map((h, i) => `${i + 1}. ${h.title} — ${h.excerpt}`)
-            .join("\n\n")}\n\nFor life-threatening situations, call 112.`
+            .join("\n\n")}\n\nFor life-threatening emergencies, call 112.`
         : "The language model could not be reached and no knowledge-base passages matched. For life-threatening situations, call 112.",
       sources: hits,
       aiAvailable: false,

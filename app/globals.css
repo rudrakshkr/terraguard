@@ -1,159 +1,380 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------
+   HillSense design tokens — civic / public-safety aesthetic.
+   Restrained, calm, information-first. Same hierarchy in both themes.
+   --------------------------------------------------------------- */
+
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --color-ink: #0b0f14;
-  --color-panel: #10161d;
-  --color-panel2: #141c25;
-  --color-edge: #223041;
-  --color-muted: #8ba1b7;
-  --color-accent: #38bdf8;
 }
 
-html {
+:root {
+  color-scheme: light;
+
+  /* surfaces */
+  --bg: #f6f7f4;          /* warm off-white page */
+  --surface: #ffffff;
+  --surface-2: #eef0ec;   /* sunken / code blocks */
+  --border: #d8ddd5;
+
+  /* text */
+  --text: #1c2530;        /* deep slate */
+  --text-2: #5a6878;      /* secondary */
+  --text-3: #8593a3;      /* faint */
+
+  /* accent — muted teal-blue */
+  --accent: #0e7490;
+  --accent-strong: #155e75;
+  --accent-soft: #e0f2f7;
+
+  /* semantic risk */
+  --danger: #b91c1c;
+  --danger-soft: #fdecea;
+  --high: #c2410c;
+  --high-soft: #ffedd5;
+  --moderate: #a16207;
+  --moderate-soft: #fef9c3;
+  --low: #15803d;
+  --low-soft: #dcfce7;
+
+  --info: #1d4ed8;
+  --info-soft: #dbeafe;
+  --warn: #92400e;
+  --warn-soft: #fef3c7;
+
+  --shadow-card: 0 1px 2px rgba(28, 37, 48, 0.06);
+}
+
+html.dark {
   color-scheme: dark;
+
+  --bg: #101619;
+  --surface: #182026;
+  --surface-2: #101619;
+  --border: #2a353d;
+
+  --text: #e8edf1;
+  --text-2: #9aacb8;
+  --text-3: #64798a;
+
+  --accent: #4cc3dd;
+  --accent-strong: #7dd3fc;
+  --accent-soft: #10333d;
+
+  --danger: #f0867c;
+  --danger-soft: #3a1613;
+  --high: #f0a35e;
+  --high-soft: #3a2410;
+  --moderate: #d9b961;
+  --moderate-soft: #32290c;
+  --low: #6fce94;
+  --low-soft: #12301f;
+
+  --info: #93b4f5;
+  --info-soft: #14213c;
+  --warn: #d9b961;
+  --warn-soft: #32290c;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
-body {
-  background: #0b0f14;
-  color: #e6edf3;
-  font-family: var(--font-sans), system-ui, sans-serif;
-}
-
-/* Subtle topographic contour texture — mountain identity without gradients */
-.topo {
-  background-image: repeating-radial-gradient(
-    circle at 85% -10%,
-    transparent 0 42px,
-    rgba(56, 189, 248, 0.05) 42px 43px
-  );
-}
-
-/* Panels */
-.panel {
-  background: #10161d;
-  border: 1px solid #223041;
-  border-radius: 0.75rem;
-}
-
-.panel-hover {
-  transition: border-color 0.15s ease, transform 0.15s ease;
-}
-.panel-hover:hover {
-  border-color: #3b82c4;
-  transform: translateY(-1px);
-}
-
-/* Focus ring */
-:focus-visible {
-  outline: 2px solid #38bdf8;
-  outline-offset: 2px;
-}
-
-/* Scrollbars */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-thumb {
-  background: #223041;
-  border-radius: 6px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #2f4056;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-/* ---------- Leaflet theming ---------- */
-.leaflet-container {
-  background: #0d1218;
-  font-family: var(--font-sans), system-ui, sans-serif;
-  z-index: 0;
-}
-.leaflet-tile {
-  filter: brightness(0.82) saturate(0.75) contrast(1.05) hue-rotate(185deg) invert(0.92);
-}
-.leaflet-control-attribution {
-  background: rgba(11, 15, 20, 0.8) !important;
-  color: #8ba1b7 !important;
-  font-size: 10px;
-}
-.leaflet-control-attribution a {
-  color: #38bdf8 !important;
-}
-.leaflet-bar,
-.leaflet-bar a {
-  background: #141c25 !important;
-  color: #e6edf3 !important;
-  border-color: #223041 !important;
-}
-.leaflet-popup-content-wrapper,
-.leaflet-popup-tip {
-  background: #141c25;
-  color: #e6edf3;
-  border: 1px solid #223041;
-}
-.leaflet-popup-content-wrapper {
-  border-radius: 10px;
-}
-.leaflet-popup-content {
-  margin: 12px 14px;
-  font-size: 13px;
-}
-
-/* Incident dot markers */
-.marker-dot {
-  border-radius: 9999px;
-  border: 2px solid rgba(255, 255, 255, 0.85);
-  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
-}
-.marker-dot.is-active {
-  animation: markerPulse 1.6s ease-out infinite;
-}
-@keyframes markerPulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.55);
-  }
-  100% {
-    box-shadow: 0 0 0 14px rgba(56, 189, 248, 0);
-  }
-}
-
-/* Fade-up entrance */
-@keyframes fadeUp {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-.fade-up {
-  animation: fadeUp 0.35s ease both;
-}
-
-/* ---------- Print (incident report) ---------- */
-@media print {
+/* ================================================================
+   BASE
+   ================================================================ */
+@layer base {
   body {
-    background: #fff !important;
-    color: #111 !important;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans), system-ui, sans-serif;
   }
-  .no-print {
-    display: none !important;
+
+  /* focus visibility for keyboard users */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
   }
-  .print-sheet {
-    box-shadow: none !important;
-    border: none !important;
-    margin: 0 !important;
-    max-width: none !important;
-    width: 100% !important;
+}
+
+/* ================================================================
+   COMPONENTS — live in the components layer so Tailwind utilities
+   (hidden, lg:inline-flex, ml-auto, truncation…) always win.
+   ================================================================ */
+@layer components {
+
+  /* ---------- layout container ---------- */
+  /* Shared layout container — header nav and page content use the SAME
+     measure so they can never drift out of alignment.
+     100% → 1152px max, consistent gutters per breakpoint. */
+  .container-page {
+    margin-inline: auto;
+    width: 100%;
+    max-width: 72rem;
+    padding-inline: 16px;
   }
-  .print-text {
-    color: #111 !important;
+
+  /* ---------- surfaces ---------- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow-card);
   }
+
+  .muted { color: var(--text-2); }
+  .faint { color: var(--text-3); }
+  .accent-text { color: var(--accent); }
+  .mono { font-family: var(--font-mono), ui-monospace, monospace; }
+
+  /* ---------- chips: severity & status ---------- */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+    border: 1px solid transparent;
+  }
+  .chip .dot { width: 7px; height: 7px; border-radius: 999px; }
+  .chip-critical { background: var(--danger-soft); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
+  .chip-critical .dot { background: var(--danger); }
+  .chip-high { background: var(--high-soft); color: var(--high); border-color: color-mix(in srgb, var(--high) 30%, transparent); }
+  .chip-high .dot { background: var(--high); }
+  .chip-moderate { background: var(--moderate-soft); color: var(--moderate); border-color: color-mix(in srgb, var(--moderate) 30%, transparent); }
+  .chip-moderate .dot { background: var(--moderate); }
+  .chip-low { background: var(--low-soft); color: var(--low); border-color: color-mix(in srgb, var(--low) 30%, transparent); }
+  .chip-low .dot { background: var(--low); }
+  .chip-info { background: var(--info-soft); color: var(--info); border-color: color-mix(in srgb, var(--info) 30%, transparent); }
+  .chip-info .dot { background: var(--info); }
+  .chip-warn { background: var(--warn-soft); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+  .chip-warn .dot { background: var(--warn); }
+  .chip-neutral { background: var(--surface-2); color: var(--text-2); border-color: var(--border); }
+  .chip-neutral .dot { background: var(--text-3); }
+
+  /* ---------- buttons: one control-height system ----------
+     .btn 38px · .btn-sm 32px · .btn-icon 36px (square).
+     Rows can mix these without vertical drift. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 38px;
+    padding: 0 16px;
+    border-radius: 8px;
+    font-size: 13.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background-color .15s ease, border-color .15s ease;
+  }
+  .btn-sm {
+    height: 32px;
+    padding: 0 12px;
+    font-size: 12.5px;
+    border-radius: 7px;
+    gap: 6px;
+  }
+  .btn-icon {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    justify-content: center;
+  }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  html.dark .btn-primary { color: #0c1a20; }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-strong); }
+  html.dark .btn-primary:hover:not(:disabled) { background: var(--accent-soft); }
+  .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+  .btn-secondary:hover:not(:disabled) { border-color: var(--accent); }
+  .btn-ghost { background: transparent; color: var(--text-2); }
+  .btn-ghost:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-danger:hover:not(:disabled) { filter: brightness(0.92); }
+
+  /* Compact header controls — 32px high, smaller type/padding. Used between
+     md and xl so brand + nav + utilities always fit without wrapping. */
+  .btn-header-sm {
+    height: 32px;
+    padding: 0 12px;
+    font-size: 12.5px;
+    gap: 6px;
+    border-radius: 7px;
+  }
+  .btn-header-sm.btn-icon { width: 32px; padding: 0; }
+  .nav-link {
+    height: 34px;
+    padding: 0 10px;
+    gap: 6px;
+    font-size: 12.5px;
+    white-space: nowrap;
+    border-radius: 7px;
+  }
+  .nav-link .chip-dot { width: 6px; height: 6px; }
+  @media (min-width: 1280px) {
+    .nav-link { height: 36px; padding: 0 12px; font-size: 13px; }
+    .btn-header-sm { height: 36px; padding: 0 14px; font-size: 13px; }
+    .btn-header-sm.btn-icon { width: 36px; }
+  }
+
+  /* ---------- inputs: match .btn height so mixed rows stay flush ---------- */
+  .input {
+    display: block;
+    width: 100%;
+    height: 38px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0 12px;
+    font-size: 14px;
+    color: var(--text);
+  }
+  .input::placeholder { color: var(--text-3); }
+  .input:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+
+  textarea.input {
+    height: auto;
+    min-height: 76px;
+    padding: 9px 12px;
+    line-height: 1.5;
+    resize: vertical;
+  }
+  select.input {
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235a6878' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 32px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  /* ---------- segmented control (List/Map, Yes/No/Not sure) ---------- */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    height: 38px;
+    padding: 3px;
+    gap: 2px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .segmented > button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 0 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-2);
+    transition: background-color .12s ease, color .12s ease;
+  }
+  .segmented > button[aria-pressed="true"],
+  .segmented > button[aria-selected="true"] {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .segmented-sm { height: 32px; padding: 2px; }
+  .segmented-sm > button { padding: 0 10px; font-size: 12px; }
+
+  /* ---------- check bullets ---------- */
+  .check-list { list-style: none; padding: 0; margin: 0; }
+  .check-list li { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; line-height: 1.5; }
+  .check-list li::before { content: "✓"; color: var(--low); font-weight: 700; flex-shrink: 0; }
+
+  /* ---------- sections & banners ---------- */
+  /* consistent vertical rhythm between stacked page sections */
+  .stack > * + * { margin-top: 16px; }
+  .stack-lg > * + * { margin-top: 24px; }
+
+  /* full-width info banners (sign-in hint, emergency strip): one pattern —
+     fixed padding, vertically centered icon + text */
+  .banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+  .banner .banner-icon {
+    display: flex;
+    height: 34px;
+    width: 34px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+  }
+  .banner p { font-size: 13px; line-height: 1.55; }
+
+  /* ---------- card metadata row ---------- */
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 16px;
+    row-gap: 4px;
+    font-size: 12.5px;
+  }
+  .meta-row > span { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+  .meta-row svg { flex-shrink: 0; }
+}
+
+/* ================================================================
+   OVERRIDES — element-scoped fixes that must beat the component layer.
+   ================================================================ */
+
+/* The header's inner container must not stretch to fill its flex parent —
+   a fixed measure that actually centers (flex-grow defeats margin:auto). */
+header .container-page {
+  max-width: 72rem;
+  margin-inline: auto;
+}
+
+/* ================================================================
+   THIRD-PARTY (leaflet)
+   ================================================================ */
+.leaflet-container { background: var(--surface-2); font-family: var(--font-sans), system-ui, sans-serif; z-index: 0; }
+html:not(.dark) .leaflet-tile { filter: saturate(0.9); }
+html.dark .leaflet-tile { filter: brightness(0.75) saturate(0.7) contrast(1.05); }
+.leaflet-control-attribution { background: color-mix(in srgb, var(--surface) 85%, transparent) !important; color: var(--text-2) !important; font-size: 10px; }
+.leaflet-control-attribution a { color: var(--accent) !important; }
+.leaflet-bar, .leaflet-bar a { background: var(--surface) !important; color: var(--text) !important; border-color: var(--border) !important; }
+.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+.leaflet-popup-content-wrapper { border-radius: 10px; }
+.leaflet-popup-content { margin: 12px 14px; font-size: 13px; }
+
+/* markers */
+.marker-dot { border-radius: 999px; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+html.dark .marker-dot { border-color: #1a232a; }
+.marker-dot.is-active { animation: markerPulse 1.8s ease-out infinite; }
+@keyframes markerPulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+  100% { box-shadow: 0 0 0 12px transparent; }
+}
+.user-dot { border-radius: 999px; background: var(--accent); border: 3px solid #fff; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* motion restraint */
+@keyframes fadeUp { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.fade-up { animation: fadeUp .25s ease both; }
+
+/* ================================================================
+   PRINT
+   ================================================================ */
+@media print {
+  body { background: #fff !important; color: #111 !important; }
+  .no-print { display: none !important; }
+  .print-sheet { box-shadow: none !important; border: none !important; margin: 0 !important; max-width: none !important; width: 100% !important; }
+  .print-text { color: #111 !important; }
 }

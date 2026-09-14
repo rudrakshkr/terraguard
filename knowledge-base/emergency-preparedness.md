@@ -1,3 +1,9 @@
+---
+title: Emergency Preparedness
+organization: HillSense sample knowledge base
+material: Sample reference material — prepared for demonstration; not an official government publication
+---
+
 # Emergency Preparedness — Sample Reference Document
 
 > Sample reference material prepared for the HillSense AI demonstration. Not an official government publication.
