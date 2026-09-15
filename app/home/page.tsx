@@ -97,7 +97,7 @@ export default function HomePage() {
             {profileLoc ? "Verified hazards near your saved location." : "Verified hazards across Himachal Pradesh — add a location on your profile for nearby alerts."}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="btn-row sm:shrink-0">
           <Link href="/" className="btn btn-secondary"><Navigation className="h-4 w-4" /> Public map</Link>
           <Link href="/report" className="btn btn-primary"><Siren className="h-4 w-4" /> Report Hazard</Link>
         </div>

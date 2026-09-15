@@ -131,12 +131,11 @@ export default function Navbar() {
                 <LogOut className="h-4 w-4" />
               </button>
             </>
-          ) : (
-            <Link href="/login" className="btn btn-secondary btn-header-sm" title="Sign in with your phone number">
-              <LogIn className="h-4 w-4" />
-              <span className="hidden whitespace-nowrap sm:inline">Sign in</span>
-              <UserIcon className="h-4 w-4 sm:hidden" />
-            </Link>
+          ) : (              <Link href="/login" className="btn btn-secondary btn-header-sm max-sm:min-w-0 max-sm:!px-2" title="Sign in with your phone number">
+                <LogIn className="h-4 w-4" />
+                <span className="hidden whitespace-nowrap sm:inline">Sign in</span>
+                <UserIcon className="h-4 w-4 sm:hidden" />
+              </Link>
           )}
 
           {/* Primary CTA: icon-only at md (space-critical band), full label lg+ */}
@@ -152,8 +151,9 @@ export default function Navbar() {
         </div>
       </div>
 
-      {/* Mobile nav — 5 equal tabs, flush with the container's horizontal padding */}
-      <nav className="border-t md:hidden" style={{ borderColor: "var(--border)" }} aria-label="Primary mobile">
+      {/* Mobile nav — 5 equal tabs, flush with the container's horizontal padding.
+          Bottom padding clears iOS home-indicator / gesture bars on phones. */}
+      <nav className="border-t pb-[max(env(safe-area-inset-bottom),4px)] md:hidden" style={{ borderColor: "var(--border)" }} aria-label="Primary mobile">
         <div className="container-page !px-0">
           <div className="grid grid-cols-5 py-1">
             {LINKS.map(({ href, label, icon: Icon }) => {

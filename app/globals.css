@@ -96,6 +96,20 @@ html.dark {
     outline-offset: 2px;
     border-radius: 4px;
   }
+
+  /* ---- mobile responsiveness foundations ---- */
+  /* Nothing may push the page wider than the viewport: text wraps,
+     images and embeds shrink, and long words/IDs break instead of
+     causing horizontal scroll on phones. */
+  html { overflow-x: hidden; text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
+  img, svg, video, canvas, iframe, embed, object { max-width: 100%; }
+  p, li, h1, h2, h3, h4 { overflow-wrap: break-word; }
+
+  /* 16px input font-size on phones stops iOS Safari auto-zooming the
+     viewport when an input is focused. */
+  @media (max-width: 640px) {
+    input, select, textarea { font-size: 16px !important; }
+  }
 }
 
 /* ================================================================
@@ -159,7 +173,9 @@ html.dark {
 
   /* ---------- buttons: one control-height system ----------
      .btn 38px · .btn-sm 32px · .btn-icon 36px (square).
-     Rows can mix these without vertical drift. */
+     Rows can mix these without vertical drift.
+     On phones buttons stretch full-width inside stacked action rows
+     and inherit minimum 44px tap-target sizing (accessibility). */
   .btn {
     display: inline-flex;
     align-items: center;
@@ -174,6 +190,10 @@ html.dark {
     border: 1px solid transparent;
     cursor: pointer;
     transition: background-color .15s ease, border-color .15s ease;
+    touch-action: manipulation;
+  }
+  @media (hover: none) and (pointer: coarse) {
+    .btn { min-height: 44px; }
   }
   .btn-sm {
     height: 32px;
@@ -199,6 +219,26 @@ html.dark {
   .btn-ghost:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
   .btn-danger { background: var(--danger); color: #fff; }
   .btn-danger:hover:not(:disabled) { filter: brightness(0.92); }
+
+  /* ---- full-width stacked action rows on phones ----
+     Apply to the FLEX PARENT of buttons/selects: children stretch to
+     one control per row, heights stay consistent, no cramped taps. */
+  .btn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  @media (max-width: 640px) {
+    .btn-row > * { flex: 1 1 100%; }
+    .btn-row { gap: 10px; }
+  }
+  @media (min-width: 641px) {
+    .btn-row { gap: 8px; }
+  }
+
+  /* ---- inputs that shrink gracefully in tight flex rows ----
+     Base width is min-content so "flex-1" can take over on phones;
+     on ≥sm they resume a usable intrinsic width. */
+  .btn-width { width: auto; min-width: 0; }
+  @media (min-width: 640px) {
+    .btn-width { min-width: 130px; }
+  }
 
   /* Compact header controls — 32px high, smaller type/padding. Used between
      md and xl so brand + nav + utilities always fit without wrapping. */
@@ -317,6 +357,10 @@ html.dark {
     border-radius: 999px;
   }
   .banner p { font-size: 13px; line-height: 1.55; }
+  /* On phones the icon rides above the text so long copy keeps its measure */
+  @media (max-width: 640px) {
+    .banner { align-items: flex-start; }
+  }
 
   /* ---------- card metadata row ---------- */
   .meta-row {
@@ -329,6 +373,10 @@ html.dark {
   }
   .meta-row > span { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
   .meta-row svg { flex-shrink: 0; }
+  /* Phones: metadata stacks vertically with hanging icon indent */
+  @media (max-width: 640px) {
+    .meta-row { flex-direction: column; align-items: flex-start; row-gap: 6px; }
+  }
 }
 
 /* ================================================================

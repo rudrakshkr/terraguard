@@ -264,7 +264,7 @@ export default function ReportPage() {
           Reporting requires a verified account so every hazard report has an accountable owner and
           repeat submissions can be prevented. Browsing hazards stays open to everyone.
         </p>
-        <div className="mt-6 flex items-center justify-center gap-3">
+        <div className="btn-row mt-6">
           <Link href="/login?next=/report" className="btn btn-primary">Sign in with phone</Link>
           <Link href="/" className="btn btn-secondary">Browse hazards instead</Link>
         </div>
@@ -581,7 +581,7 @@ export default function ReportPage() {
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="btn-row">
             <button type="button" onClick={analyze} disabled={!canAnalyze} className="btn btn-primary">
               {analyzing ? <Spinner className="h-4 w-4" /> : <Search className="h-4 w-4" aria-hidden />}
               {analyzing ? "Verifying report…" : "Submit for AI verification"}

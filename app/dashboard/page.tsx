@@ -139,15 +139,15 @@ export default function DashboardPage() {
             only verified public alerts.
           </p>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="btn-row sm:shrink-0">
           {rag && (
             <>
-              <span className="chip chip-neutral" title="Retrieval corpus status">
-                <BookOpenCheck className="h-3 w-3" />
+              <span className="chip chip-neutral max-sm:!whitespace-normal max-sm:!text-left" title="Retrieval corpus status">
+                <BookOpenCheck className="h-3 w-3 shrink-0" />
                 RAG · {rag.docs} docs / {rag.chunks} chunks · {rag.embedder === "api" ? "API embeddings" : "local embeddings"}
               </span>
               <span className={`chip ${rag.aiAvailable ? "chip-low" : "chip-warn"}`}>
-                <Cpu className="h-3 w-3" />
+                <Cpu className="h-3 w-3 shrink-0" />
                 {rag.aiAvailable ? "LLM connected" : "Heuristic mode — no API key"}
               </span>
             </>

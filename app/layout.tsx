@@ -1,10 +1,18 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Navbar from "@/components/Navbar";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // Pin the max scale so phone browsers never zoom the layout out of shape;
+  // user pinch-zoom (accessibility) stays enabled.
+  maximumScale: 5,
+};
 
 export const metadata: Metadata = {
   title: "HillSense AI — Community hazard intelligence for the Himalayas",

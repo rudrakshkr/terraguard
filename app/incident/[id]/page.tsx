@@ -278,7 +278,7 @@ export default function IncidentPage() {
         <Link href="/" className="flex items-center gap-1.5 text-[13px] font-medium muted hover:opacity-80">
           <ArrowLeft className="h-4 w-4" /> Nearby hazards
         </Link>
-        <div className="flex items-center gap-2">
+        <div className="btn-row">
           <button onClick={() => downloadPDF(i, distance)} className="btn btn-secondary">
             <Download className="h-4 w-4" /> Download PDF
           </button>
@@ -288,7 +288,7 @@ export default function IncidentPage() {
         </div>
       </div>
 
-      <article className="print-sheet card p-6 sm:p-8">
+      <article className="print-sheet card p-4 sm:p-6 md:p-8">
         {/* Header */}
         <header className="border-b pb-5" style={{ borderColor: "var(--border)" }}>
           <div className="flex flex-wrap items-center gap-2">
@@ -349,7 +349,7 @@ export default function IncidentPage() {
               </div>
             ) : authed ? (
               <>
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="btn-row mt-3">
                   <button onClick={() => confirm(true)} disabled={confirming} className="btn btn-primary">
                     <ThumbsUp className="h-4 w-4" /> Yes, still present
                   </button>
@@ -463,11 +463,11 @@ export default function IncidentPage() {
 
         {/* Meta */}
         <section className="mt-6 grid grid-cols-2 gap-4 rounded-lg border p-4 text-[13px] sm:grid-cols-4" style={{ borderColor: "var(--border)" }}>
-          <div>
+          <div className="min-w-0">
             <div className="text-[10.5px] font-bold uppercase tracking-wider faint">Current status</div>
             <div className="mt-1"><StatusChip status={i.status} /></div>
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="text-[10.5px] font-bold uppercase tracking-wider faint">Last confirmed</div>
             <div className="mt-1">{fmtAge(minsConfirmed)}</div>
           </div>
@@ -475,7 +475,7 @@ export default function IncidentPage() {
             <div className="text-[10.5px] font-bold uppercase tracking-wider faint">Assessment confidence</div>
             <div className="mt-1"><ConfidenceChip compact score={i.confidence} heuristic={i.origin !== "ai"} needsVerification={i.needs_verification} /></div>
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="text-[10.5px] font-bold uppercase tracking-wider faint">Reported</div>
             <div className="mt-1">{fmtDateTime(i.created_at)}</div>
           </div>

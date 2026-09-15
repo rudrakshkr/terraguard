@@ -150,7 +150,7 @@ export default function NearbyPage() {
             <span className="min-w-0">{statusLine}</span>
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex flex-col gap-2 xs:flex-row xs:items-center sm:flex-row sm:items-center sm:shrink-0">
           <div className="segmented" role="tablist" aria-label="View mode">
             {(["list", "map"] as const).map((v) => (
               <button
@@ -190,7 +190,7 @@ export default function NearbyPage() {
           <div className="flex flex-1 flex-wrap items-center gap-x-2 gap-y-2 sm:gap-x-3">
             <span className="text-[13px] muted">or choose</span>
             <select
-              className="input !w-auto min-w-[9.5rem]"
+              className="input btn-width min-w-0 sm:!w-auto sm:min-w-[9.5rem]"
               value={loc?.preset ?? ""}
               onChange={(e) => pickPreset(e.target.value)}
               aria-label="Choose location manually"
@@ -205,7 +205,7 @@ export default function NearbyPage() {
               <label className="flex items-center gap-2 sm:ml-auto">
                 <span className="text-[13px] muted">Radius</span>
                 <select
-                  className="input !w-auto min-w-[8.5rem]"
+                  className="input btn-width min-w-0 sm:!w-auto sm:min-w-[8.5rem]"
                   value={radius}
                   onChange={(e) => setRadius(Number(e.target.value))}
                   aria-label="Search radius"
