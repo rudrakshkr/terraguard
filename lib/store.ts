@@ -11,8 +11,6 @@ import type { Incident, IncidentFilters } from "./types";
 
 const DATA_PATH = path.join(dataDir, ".hillsense-incidents.json");
 const KV_KEY = "hillsense:incidents:v1";
-/** Redis mode: refresh the read cache at most this often (mutations always re-read). */
-const READ_CACHE_TTL_MS = 3_000;
 /** Set HS_SEED=0 (e.g. on the production deployment) to start with a clean slate —
  *  no demonstration incidents. Local dev stays seeded by default. */
 const seedsEnabled = process.env.HS_SEED !== "0";
@@ -20,12 +18,10 @@ const seedFn = (): Incident[] => (seedsEnabled ? seedIncidents() : []);
 
 let cache: Incident[] | null = null;
 let cacheMtimeMs = 0;
-let cacheAt = 0;
 
-/** Invalidate the in-memory cache when the file was changed externally
- *  (manual data fixes, other processes) so edits show without a restart. */
+/** File mode only: invalidate the in-memory cache when the file was changed
+ *  externally (manual data fixes, other processes) so edits show without a restart. */
 async function cacheStale(): Promise<boolean> {
-  if (kvMode !== "file") return cache === null || Date.now() - cacheAt > READ_CACHE_TTL_MS;
   try {
     const st = await fs.stat(DATA_PATH);
     return cache !== null && st.mtimeMs > cacheMtimeMs + 1;
@@ -53,13 +49,15 @@ function migrate(raw: Incident[]): Incident[] {
 }
 
 async function load(): Promise<Incident[]> {
-  if (cache && !(await cacheStale())) return cache;
   if (kvMode !== "file") {
+    // Remote (shared) mode: ALWAYS read the source of truth. A TTL read cache
+    // here made a just-published report 404 when the detail-page request landed
+    // on a different server instance within the cache window.
     const doc = await kvLoadDoc<Incident[]>(KV_KEY, seedFn);
     cache = migrate(Array.isArray(doc) ? doc : seedFn());
-    cacheAt = Date.now();
     return cache;
   }
+  if (cache && !(await cacheStale())) return cache;
   try {
     const raw = JSON.parse(await fs.readFile(DATA_PATH, "utf8")) as Incident[];
     if (Array.isArray(raw)) {
@@ -82,7 +80,6 @@ async function load(): Promise<Incident[]> {
 
 async function persist(list: Incident[]): Promise<void> {
   cache = list;
-  cacheAt = Date.now();
   if (kvMode !== "file") {
     await kvSaveDoc(KV_KEY, list);
     return;

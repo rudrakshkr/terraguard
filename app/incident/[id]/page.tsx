@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -157,9 +157,23 @@ export default function IncidentPage() {
   const [postingComment, setPostingComment] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
   const distance = useDistance(incident);
+  const loadedOnceRef = useRef(false);
 
   const load = () => {
     // authFetch: signed-in users get my_confirmation back; guests get the public view.
+    // A brief retry ladder: immediately after publishing, a serverless instance
+    // on another region may briefly not see the new document yet.
+    const delays = [0, 800, 2000];
+    const attempts = delays.map(
+      (delay) =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => resolve(fetchOnce()), delay);
+        }),
+    );
+    return Promise.allSettled(attempts);
+  };
+
+  const fetchOnce = () => {
     authFetch(`/api/incidents/${id}`, { cache: "no-store" })
       .then(async (r) => {
         const data = await r.json();
@@ -167,8 +181,14 @@ export default function IncidentPage() {
         setIncident(data.incident as Incident);
         setComments((data.comments ?? []) as CommentItem[]);
         setMyConfirmation(data.my_confirmation ?? null);
+        loadedOnceRef.current = true;
+        setError(null);
       })
-      .catch(() => setError("Could not load this incident. Check the link and try again."));
+      .catch((e: unknown) => {
+        if (incident || loadedOnceRef.current) return; // had data — never flash the error
+        setError("Could not load this incident. Check the link and try again.");
+        void e;
+      });
   };
 
   useEffect(() => {

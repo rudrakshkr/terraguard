@@ -60,6 +60,8 @@ If the image shows a hazard scene, weigh what is visible (debris extent, water l
 
 The "summary" field must describe the situation in the reporter's own words — never restate the REPORTER-PROVIDED DETAILS (hazard type, when, affected, etc.) inside the summary.
 
+If the REPORT text is gibberish, random characters, or has no recognizable relation to any disaster topic, classify honestly: set incident_type to "Other", set confidence to 0.1, set needs_verification to true, and explain in verification_note that the description is not readable. Never invent details to fill missing content.
+
 Respond with JSON only.`;
 
 const GROUNDED_SYSTEM = `You are HillSense AI, a disaster-response advisor for mountain regions. You are decision support, NOT an authoritative emergency service.
@@ -254,6 +256,7 @@ export async function analyzeIncident(input: AnalyzeInput): Promise<AnalyzeResul
       aiAvailable: ai,
       hasImage,
       hasText: Boolean(text),
+      text,
       hazardType: input.hazardType,
       context: input.context,
       location: input.location,

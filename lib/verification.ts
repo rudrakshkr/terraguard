@@ -23,6 +23,67 @@ export interface VerificationResult {
   explanation: string;
 }
 
+/**
+ * Common Latin letter bigrams across English and common Hindi transliteration
+ * (Hinglish). Used only as a junk-text signal — never as a quality score.
+ */
+const COMMON_BIGRAMS = new Set(
+  ("th he in er an re on at en nd ti es or te of ed is it al ar st to nt ng se ha as ou io le ve co me de hi ri ro ic ne ea ra ce li ch ll be ma si om ur ca el ta la ns di fo ho pe ec pr no ct us ac ot il tr ly nc et ut ss so rs un lo wa ge ie wh ee wi em ad ol rt po we na ul ni ts mo ow pa im mi ai sh ir su id os iv ia am fi ci vi pl ig tu ev ld ry mp fe bl ab gh oc" +
+    " ya ba ga sa ja da ka ki ko ku mu pu ru tu hu bha rha ny kh dh bh ph jh gh")
+    .split(" "),
+);
+
+/**
+ * Detect keyboard-mash / random-character descriptions (e.g. "jaifdakfjajdnawdawd").
+ * Deliberately conservative: real English, Hinglish and Devanagari text passes;
+ * only statistical junk is flagged. Short text (< 12 chars) is never flagged here.
+ */
+export function looksLikeGibberish(raw: string): boolean {
+  const text = (raw ?? "").trim();
+  if (text.length < 12) return false;
+  const lettersAll = text.replace(/[^\p{L}]/gu, "");
+  if (!lettersAll) return false; // digits/punctuation only — other checks judge
+  const latin = lettersAll.replace(/[^\u0000-\u024F]/gu, "");
+  const latinDominant = latin.length / lettersAll.length > 0.8;
+
+  const tokens = text.toLowerCase().split(/[^\p{L}\p{N}']+/u).filter(Boolean);
+  if (tokens.length === 0) return true;
+
+  if (/(\p{L})\1{4,}/u.test(text)) return true; // "aaaaaa"
+  if (/(asdf|qwer|zxcv|lkjh|poiuy|mnbv)/i.test(text)) return true; // keyboard runs
+
+  let bigramHits = 0;
+  let bigramTotal = 0;
+  let wordLike = 0;
+  let letterTokens = 0;
+  for (const t of tokens) {
+    const letters = t.replace(/[^\p{L}]/gu, "");
+    if (!letters) continue; // pure digits — neutral
+    letterTokens++;
+    const isLatin = /^[\u0000-\u024F]+$/u.test(letters);
+    let ok = true;
+    if (isLatin) {
+      if (letters.length >= 3 && !/[aeiou]/i.test(letters)) ok = false;
+      if (/[bcdfghjklmnpqrstvwxz]{5,}/i.test(letters)) ok = false;
+    }
+    if (ok) wordLike++;
+    if (latinDominant && letters.length > 1) {
+      for (let i = 0; i < letters.length - 1; i++) {
+        bigramTotal++;
+        if (COMMON_BIGRAMS.has(letters.slice(i, i + 2))) bigramHits++;
+      }
+    }
+  }
+  const bigramScore = bigramTotal > 0 ? bigramHits / bigramTotal : 1;
+  const wordRatio = letterTokens > 0 ? wordLike / letterTokens : 1;
+  const uniqRatio = new Set(tokens).size / tokens.length;
+
+  if (latinDominant && bigramTotal >= 8 && bigramScore < 0.22) return true;
+  if (tokens.length >= 4 && uniqRatio < 0.35) return true; // "asdf asdf asdf asdf"
+  if (letterTokens >= 3 && wordRatio < 0.35) return true;
+  return false;
+}
+
 const HAZARD_IMAGE_WORDS: Record<string, string[]> = {
   Landslide: ["debris", "mud", "slide", "slope", "hill", "earth", "landslide", "buried"],
   Rockfall: ["rock", "boulder", "stone", "rubble", "debris"],
@@ -48,6 +109,8 @@ export function verifyReport(input: {
   aiAvailable: boolean;
   hasImage: boolean;
   hasText: boolean;
+  /** The reporter's own description text (for readability checks). */
+  text?: string;
   /** Reporter-declared hazard type from the form (may be absent). */
   hazardType?: IncidentType | string;
   /** Structured observations the reporter added. */
@@ -59,6 +122,8 @@ export function verifyReport(input: {
 }): VerificationResult {
   const { analysis: a, aiAvailable, hasImage, hasText } = input;
   const checks: EvidenceCheck[] = [];
+  const reportText = (input.text ?? "").trim();
+  const gibberish = hasText && looksLikeGibberish(reportText);
   const band = a.confidence >= 0.8 ? "High" : a.confidence >= 0.6 ? "Medium" : "Low";
 
   const add = (check: string, pass: EvidenceCheck["pass"], detail: string) =>
@@ -121,11 +186,15 @@ export function verifyReport(input: {
 
   /* ------------------------------- text quality -------------------------------- */
   add(
-    "Description checked",
-    hasText ? "pass" : "skip",
-    hasText
-      ? `Description contains hazard-relevant detail (${a.risk_factors?.length ?? 0} risk factors extracted).`
-      : "No description provided.",
+    "Description quality",
+    !hasText ? "skip" : gibberish ? (hasImage ? "warn" : "fail") : "pass",
+    !hasText
+      ? "No description provided."
+      : gibberish
+        ? hasImage
+          ? "The written description is not readable text — only the photo could be assessed, so this cannot be auto-published."
+          : "The written description is not readable text (it appears to be random characters), so there is no evidence to check."
+        : `Description contains hazard-relevant detail (${a.risk_factors?.length ?? 0} risk factors extracted).`,
   );
 
   /* ------------------------- image plausibility / quality ---------------------- */
@@ -215,6 +284,7 @@ export function verifyReport(input: {
   }
 
   const weak =
+    gibberish || // unreadable description must never be auto-published
     a.needs_verification === true ||
     band === "Low" ||
     (!aiAvailable && a.incident_type === "Other" && !hasImage);
