@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { authFetch } from "./useAuth";
 
 export interface ResolvedAddress {
   full_address: string;
@@ -94,6 +93,38 @@ function geoErrorMessage(codes: number[]): string {
   return "Could not get your location in this browser. Please enter your location manually below.";
 }
 
+/** Great-circle distance in km (client-side twin of lib/geo's haversine). */
+function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371;
+  const dLat = ((bLat - aLat) * Math.PI) / 180;
+  const dLng = ((bLng - aLng) * Math.PI) / 180;
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((aLat * Math.PI) / 180) * Math.cos((bLat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+/**
+ * Nearest known place to raw coordinates, for words-first labels.
+ *
+ * Used while the address is being resolved and when the geocoder is
+ * unreachable: "near Manali (≈32 km away)" beats "30.90678, 75.86120" every
+ * time. Null when the fix is far outside the served region (the caller then
+ * shows a neutral "Locating your address…" line instead of a wrong place).
+ */
+function nearestPlaceLabel(lat: number, lng: number): string | null {
+  let best: { name: string; km: number } | null = null;
+  for (const p of PRESETS) {
+    const km = haversineKm(lat, lng, p.lat, p.lng);
+    if (!best || km < best.km) best = { name: p.name, km };
+  }
+  if (!best) return null;
+  const km = Math.round(best.km);
+  if (best.km <= 25) return best.name;
+  if (best.km <= 400) return `near ${best.name} (≈${km} km away)`;
+  return null; // outside the region — don't guess
+}
+
 /**
  * Real geolocation + reverse geocoding.
  *
@@ -133,16 +164,36 @@ export function useLocationPreference() {
     }
   }, []);
 
+  /** In-place patch of the stored location (label refreshes after resolution). */
+  const patch = useCallback((fn: (cur: GeoLocation) => GeoLocation | null) => {
+    setLoc((cur) => {
+      if (!cur) return cur;
+      const next = fn(cur);
+      if (!next) return cur;
+      try {
+        localStorage.setItem(KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
   /**
    * Resolve a human-readable address for the given coordinates.
-   * Requires auth (route is user-scoped); falls back to coordinates-only.
+   *
+   * Public for signed-in users AND guests: a coordinate dump ("30.9, 75.8")
+   * tells a visitor nothing, so the proxy is open to all — accuracy is passed
+   * along so the server picks an address precision matching the fix.
+   * Falls back to null so the caller can keep a words-based label.
    */
-  const reverseGeocode = useCallback(async (lat: number, lng: number): Promise<ResolvedAddress | null> => {
+  const reverseGeocode = useCallback(async (lat: number, lng: number, accuracy?: number): Promise<ResolvedAddress | null> => {
     try {
-      const res = await authFetch(`/api/geo/reverse?lat=${lat}&lng=${lng}`);
+      const acc = typeof accuracy === "number" && Number.isFinite(accuracy) && accuracy > 0 ? `&accuracy=${Math.round(accuracy)}` : "";
+      const res = await fetch(`/api/geo/reverse?lat=${lat}&lng=${lng}${acc}`, { cache: "no-store" });
       if (!res.ok) return null;
       const data = (await res.json()) as ResolvedAddress & { error?: string };
-      if (data.error && !data.full_address) return null;
+      if (!data.full_address || (data.error && !data.full_address)) return null;
       return data;
     } catch {
       return null;
@@ -220,11 +271,15 @@ export function useLocationPreference() {
       }
 
       const { latitude, longitude, accuracy } = pos.coords;
-      // Honest immediate state: real coordinates, no address yet, clearly approximate.
+      // Words-first policy: a raw coordinate dump ("30.90678, 75.86120 · ±1031
+      // km") tells a person nothing. While the fix is unprocessed show the
+      // nearest known place from the typed/manual vocabulary instead of
+      // coordinates; the precise address then replaces it once resolved.
+      const nearest = nearestPlaceLabel(latitude, longitude);
       persist({
         lat: latitude,
         lng: longitude,
-        label: coordsLabel(latitude, longitude, accuracy),
+        label: nearest ?? "Locating your address…",
         preset: null,
         approximate: true,
         accuracy,
@@ -233,26 +288,33 @@ export function useLocationPreference() {
       });
       setBusy(false);
       setResolvingAddress(true);
-      const address = await reverseGeocode(latitude, longitude);
+      const address = await reverseGeocode(latitude, longitude, accuracy);
       if (seq !== seqRef.current) return;
       setResolvingAddress(false);
       if (address) {
         persist({
           lat: latitude,
           lng: longitude,
-          label: address.full_address || coordsLabel(latitude, longitude, accuracy),
+          label: address.full_address,
           preset: null,
           approximate: Boolean(address.approximate),
           accuracy,
           address,
           source: "gps",
         });
+      } else if (nearest) {
+        // Geocoder unreachable — keep the honest words-based label instead of
+        // degrading to a coordinate dump.
+        patch((cur) =>
+          cur.source === "gps" && cur.address == null ? { ...cur, label: nearest } : cur,
+        );
       }
-      // No address: keep the coordinates; label stays "lat, lng", approximate stays true.
+      // Otherwise: keep the current words-based label ("Locating your address…"
+      // or the nearest-place line) — never fall back to raw coordinates.
     };
 
     void run();
-  }, [persist, reverseGeocode]);
+  }, [persist, patch, reverseGeocode]);
 
   const applyPreset = useCallback(
     (name: string) => {
