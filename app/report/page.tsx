@@ -32,6 +32,16 @@ async function prepareImage(file: File): Promise<File> {
   return blob ? new File([blob], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" }) : file;
 }
 
+/** Read a File as a data URL (used to stash offline report photos in IndexedDB). */
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(new Error("Could not read the image."));
+    r.readAsDataURL(file);
+  });
+}
+
 const VERDICT_STYLE: Record<string, { chip: string; icon: typeof ShieldCheck; label: string }> = {
   verified: { chip: "chip-low", icon: ShieldCheck, label: "AI CHECK PASSED" },
   needs_review: { chip: "chip-warn", icon: AlertTriangle, label: "NEEDS REVIEW" },
@@ -92,6 +102,8 @@ export default function ReportPage() {
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savedOffline, setSavedOffline] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   /* ------------------------ new structured form fields ------------------------ */
@@ -141,6 +153,72 @@ export default function ReportPage() {
     () => !analyzing && (description.trim().length > 0 || image !== null),
     [analyzing, description, image],
   );
+
+  const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+
+  /**
+   * Offline save — no pretend analysis, no fake verification. The complete
+   * report payload (including the photo, base64-downscaled) is stored in the
+   * outbox and uploaded verbatim once connectivity returns; the backend then
+   * runs the normal AI evidence check and the incident appears with the
+   * "Pending AI verification" label until that completes.
+   */
+  async function saveOffline() {
+    if (!hazardType || (!description.trim() && !image)) {
+      setError("Pick a hazard type and add a description or photo first.");
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    try {
+      const { enqueue, newOutboxId } = await import("@/lib/offline-db");
+      // Preserve the device's real GPS coordinates even without a network:
+      // raw lat/lng are stored as-is and the human-readable address is kept
+      // only if the user typed/verified one. Reverse geocoding happens after
+      // sync — a missing network must never replace coordinates with a broad
+      // state-level label.
+      const payload = {
+        client_id: newOutboxId(),
+        description: description.trim(),
+        hazard_type: hazardType,
+        reporter_details: {
+          when: whenHappened || undefined,
+          when_exact: whenHappened === "exact" && whenExact ? whenExact : undefined,
+          happening_now: happeningNow || undefined,
+          affected: [...affected, ...(affectedOther.trim() ? [affectedOther.trim()] : [])],
+          casualties: casualties || undefined,
+          observed_severity: observedSeverity || undefined,
+          observations: observations.trim() || undefined,
+        },
+        location_text: loc?.label || customPlace.trim() || undefined,
+        lat: loc && Number.isFinite(loc.lat) ? loc.lat : undefined,
+        lng: loc && Number.isFinite(loc.lng) ? loc.lng : undefined,
+        coords_approximate: loc ? loc.approximate : true,
+        address_verified: Boolean(loc?.address),
+        photo: image
+          ? { name: image.name, type: image.type, data: await fileToDataUrl(await prepareImage(image)) }
+          : null,
+        saved_at: new Date().toISOString(),
+      };
+      await enqueue({
+        id: payload.client_id,
+        kind: "report",
+        payload,
+        created_at: payload.saved_at,
+        state: "pending",
+        attempts: 0,
+      });
+      setSavedOffline(true);
+      setDescription("");
+      setImage(null);
+      setObservations("");
+      setNotice("Report saved offline — waiting for connection. It will upload automatically and AI verification will run once delivered.");
+    } catch {
+      setError("Could not save the report on this device. Free up space or try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function onPickImage(f: File | null) {
     if (!f) { setImage(null); return; }
@@ -575,22 +653,44 @@ export default function ReportPage() {
             </div>
           </section>
 
+          {isOffline && (
+            <div className="card p-4 text-[13px]" style={{ background: "var(--warn-soft)", color: "var(--warn)" }} role="status">
+              You are offline. Fill in the report now — it will be saved on this device and uploaded
+              automatically with the full AI evidence check once you&apos;re back online. Your device GPS
+              coordinates are preserved as-is; the exact address is resolved after delivery.
+            </div>
+          )}
+
           {error && (
             <div className="card p-4 text-[13px]" style={{ background: "var(--danger-soft)", color: "var(--danger)" }} role="alert">
               {error}
             </div>
           )}
+          {notice && (
+            <div className="card p-4 text-[13px]" style={{ background: "var(--low-soft)", color: "var(--low)" }} role="status">
+              {notice}
+            </div>
+          )}
 
           <div className="btn-row">
-            <button type="button" onClick={analyze} disabled={!canAnalyze} className="btn btn-primary">
-              {analyzing ? <Spinner className="h-4 w-4" /> : <Search className="h-4 w-4" aria-hidden />}
-              {analyzing ? "Verifying report…" : "Submit report"}
-            </button>
-            {result && result.verification.status !== "rejected" && (
-              <button type="button" onClick={save} disabled={saving} className="btn btn-primary">
+            {isOffline ? (
+              <button type="button" onClick={saveOffline} disabled={saving} className="btn btn-primary">
                 {saving ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" aria-hidden />}
-                {saving ? "Publishing…" : result.verification.status === "verified" ? "Publish to nearby users" : "Save for review"}
+                {saving ? "Saving…" : "Save report offline"}
               </button>
+            ) : (
+              <>
+                <button type="button" onClick={analyze} disabled={!canAnalyze} className="btn btn-primary">
+                  {analyzing ? <Spinner className="h-4 w-4" /> : <Search className="h-4 w-4" aria-hidden />}
+                  {analyzing ? "Verifying report…" : "Submit report"}
+                </button>
+                {result && result.verification.status !== "rejected" && (
+                  <button type="button" onClick={save} disabled={saving} className="btn btn-primary">
+                    {saving ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" aria-hidden />}
+                    {saving ? "Publishing…" : result.verification.status === "verified" ? "Publish to nearby users" : "Save for review"}
+                  </button>
+                )}
+              </>
             )}
           </div>
 

@@ -122,6 +122,56 @@ export async function getAvatar(id: string): Promise<{ data: string; type: strin
   return { data: hit.data, type: hit.type };
 }
 
+const MAX_REPORT_PHOTO_BYTES = 6_000_000;
+
+/**
+ * Store an offline report's photo evidence. Reuses the exact same storage as
+ * avatars (blob mode → CDN URL, file mode → serving route) but with a larger
+ * size budget and report-photo ids so the two never collide.
+ */
+export async function putReportPhoto(
+  userId: string,
+  data: string, // data URL
+  type: string,
+): Promise<{ url: string } | { error: string }> {
+  if (!ALLOWED_IMAGE_TYPES.includes(type)) {
+    return { error: "Unsupported image type in the saved report photo." };
+  }
+  const base64 = data.includes(",") ? data.split(",")[1] ?? "" : data;
+  const approxBytes = Math.floor((base64.length * 3) / 4);
+  if (approxBytes > MAX_REPORT_PHOTO_BYTES) {
+    return { error: "The saved report photo is too large to upload." };
+  }
+  if (!/^[A-Za-z0-9+/=]+$/.test(base64.slice(0, 100))) {
+    return { error: "The saved report photo could not be read." };
+  }
+  const id = `rp_${userId.slice(0, 8)}_${await sha1Short(`${type}:${base64.slice(-4096)}:${base64.length}`)}`;
+
+  if (isBlobMode()) {
+    try {
+      const { put } = await import("@vercel/blob");
+      const buf = Buffer.from(base64, "base64");
+      const ext = type === "image/png" ? "png" : type === "image/webp" ? "webp" : "jpg";
+      const res = await put(`hillsense/reports/${id}.${ext}`, buf, {
+        access: "public",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        contentType: type,
+      });
+      return { url: res.url };
+    } catch (err) {
+      console.error("[avatar-store] report photo blob put failed", err);
+      return { error: "Could not store the report photo. Will retry." };
+    }
+  }
+
+  await mutate((d) => ({
+    doc: { ...d, avatars: { ...d.avatars, [id]: { data: `data:${type};base64,${base64}`, type, uploaded_at: new Date().toISOString() } } },
+    result: undefined,
+  }));
+  return { url: `/api/uploads/${id}` };
+}
+
 /** Best-effort removal of a user's previous avatar bytes (blob + file mode). */
 export async function deleteAvatarByUrl(url: string): Promise<void> {
   try {

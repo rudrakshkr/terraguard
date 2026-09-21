@@ -397,6 +397,16 @@ export default function IncidentPage() {
             </span>
           </p>
           <p className="mt-3 text-[15.5px] leading-relaxed">{i.summary}</p>
+          {i.photo_url && (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={i.photo_url}
+              alt={`Photo evidence submitted with this ${i.incident_type.toLowerCase()} report`}
+              className="mt-3 max-h-96 w-auto rounded-lg border"
+              style={{ borderColor: "var(--border)" }}
+              loading="lazy"
+            />
+          )}
         </header>
 
         {/* Freshness + corroboration */}

@@ -69,10 +69,13 @@ async function send(item: OutboxItem): Promise<{ res: Response; data: Record<str
       url = `/api/incidents/${item.incident_id}`;
       body = { action: "comment", ...(item.payload as { body: string }) };
       break;
-    case "report":
-      url = "/api/incidents";
-      body = item.payload;
+    case "report": {
+      // Reports are delivered to the offline-ingest endpoint, which runs the
+      // full analyze → verify pipeline server-side and stores the photo.
+      url = "/api/incidents/offline";
+      body = { client_id: item.id, ...(item.payload as Record<string, unknown>) };
       break;
+    }
     case "profile":
       url = "/api/auth/profile";
       body = item.payload;

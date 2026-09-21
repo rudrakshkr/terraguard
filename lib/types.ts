@@ -102,6 +102,8 @@ export interface Incident {
   verification_note?: string;
   origin: "seed" | "ai" | "manual";
   reporter_id?: string; // auth user id — never exposed publicly
+  photo_url?: string; // report photo evidence (stored via the shared upload store)
+  client_id?: string; // offline-outbox idempotency key (replay protection)
   reporter_details?: {
     hazard_type?: string;
     when?: string;
