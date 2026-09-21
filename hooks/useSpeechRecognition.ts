@@ -31,6 +31,12 @@ export function useSpeechRecognition(lang: "en-IN" | "hi-IN") {
   const recRef = useRef<SpeechRecognitionLike | null>(null);
   const langRef = useRef(lang);
 
+  // Keep the language used for the NEXT recognition session in sync with the
+  // language toggle (mid-session changes apply only after stop/start).
+  useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
+
   useEffect(() => {
     const t = setTimeout(() => {
       const w = window as WindowWithSpeech;

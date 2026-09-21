@@ -8,6 +8,16 @@ const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 
 export async function POST(req: NextRequest) {
   try {
+    // Clients must send multipart/form-data (or urlencoded); anything else —
+    // e.g. a bare POST with no body — would throw inside formData() and read as
+    // a server fault. Fail with a clear client error instead.
+    const contentType = req.headers.get("content-type") ?? "";
+    if (!contentType.includes("multipart/form-data") && !contentType.includes("application/x-www-form-urlencoded")) {
+      return NextResponse.json(
+        { error: "Please add a description, an image, or a voice transcription to analyse." },
+        { status: 400 },
+      );
+    }
     const form = await req.formData();
     const text = String(form.get("text") ?? "").trim();
     const context = String(form.get("context") ?? "").trim(); // structured form fields

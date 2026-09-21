@@ -299,10 +299,12 @@ export async function analyzeIncident(input: AnalyzeInput): Promise<AnalyzeResul
     parts.push({ type: "image_url", image_url: { url } });
   }
 
+  // Cap the classification call below the 60s serverless maxDuration so the
+  // whole pipeline (classify + retrieve + ground) can never time out the route.
   const classified = await chatJSON<unknown>([
     { role: "system", content: CLASSIFIER_SYSTEM },
     { role: "user", content: parts },
-  ]);
+  ], 35_000);
 
   const classification = coerceAnalysis(classified, text);
   if (!classification) {

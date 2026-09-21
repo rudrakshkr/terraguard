@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getIncident, confirmIncident } from "@/lib/store";
+import { getIncident, confirmIncident, updateStatus } from "@/lib/store";
 import {
   hasConfirmed,
   recordConfirmation,
@@ -133,6 +133,48 @@ export async function POST(
   } catch (err) {
     console.error("[api/incidents/:id POST]", err);
     return NextResponse.json({ error: "Could not process your request." }, { status: 500 });
+  }
+}
+
+/**
+ * PATCH — update an incident's operational status (Open | Responding | Resolved).
+ * Used by the Command Center table; accepts both { status } (current client) and
+ * { new_status } (legacy). Returns the updated incident or 400/404 on bad input.
+ */
+export async function PATCH(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await ctx.params;
+    const body = (await req.json()) as { status?: string; new_status?: string };
+    const next = body.status ?? body.new_status;
+    if (next !== "Open" && next !== "Responding" && next !== "Resolved") {
+      return NextResponse.json(
+        { error: "Invalid status. Use Open, Responding or Resolved." },
+        { status: 400 },
+      );
+    }
+    const incident = await getIncident(id);
+    if (!incident) {
+      return NextResponse.json({ error: "Incident not found." }, { status: 404 });
+    }
+    if (incident.status === next) {
+      return NextResponse.json({ incident }); // no-op — return current state
+    }
+    const now = new Date().toISOString();
+    const history = [...(incident.status_history ?? [{ status: incident.status, at: incident.created_at }])];
+    if (history[history.length - 1]?.status !== next) {
+      history.push({ status: next, at: now });
+    }
+    const updated = await updateStatus(id, next, history);
+    if (!updated) {
+      return NextResponse.json({ error: "Incident not found." }, { status: 404 });
+    }
+    return NextResponse.json({ incident: updated });
+  } catch (err) {
+    console.error("[api/incidents/:id PATCH]", err);
+    return NextResponse.json({ error: "Could not update the incident status." }, { status: 500 });
   }
 }
 

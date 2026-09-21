@@ -87,7 +87,11 @@ export default function DashboardPage() {
     return {
       active: list.filter((i) => i.status !== "Resolved").length,
       critical: list.filter((i) => i.severity === "Critical" && i.status !== "Resolved").length,
-      needsReview: list.filter((i) => i.verification === "needs_review" || i.needs_verification).length,
+      needsReview: list.filter(
+        (i) =>
+          (i.verification === "needs_review" || i.needs_verification === true) &&
+          i.status !== "Resolved",
+      ).length,
       stale: list.filter((i) => needsReconfirmation(i)).length,
       resolved: list.filter((i) => i.status === "Resolved").length,
     };
@@ -100,15 +104,33 @@ export default function DashboardPage() {
   }, [incidents]);
 
   const setStatusFor = async (id: string, status: Incident["status"]) => {
-    setIncidents((prev) => (prev ?? []).map((i) => (i.id === id ? { ...i, status } : i)));
+    // Optimistic update, but remember the previous value so a failed request
+    // rolls the row back instead of silently showing a status that never saved.
+    let previous: Incident["status"] | undefined;
+    setIncidents((prev) =>
+      (prev ?? []).map((i) => {
+        if (i.id !== id) return i;
+        previous = i.status;
+        return { ...i, status };
+      }),
+    );
     try {
-      await fetch(`/api/incidents/${id}`, {
+      const res = await fetch(`/api/incidents/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const data = (await res.json()) as { incident?: Incident };
+      if (data.incident) {
+        // Reconcile with the server's record (covers no-op / extra history).
+        setIncidents((prev) => (prev ?? []).map((i) => (i.id === id ? data.incident! : i)));
+      }
     } catch {
-      load();
+      if (previous !== undefined) {
+        setIncidents((prev) => (prev ?? []).map((i) => (i.id === id ? { ...i, status: previous! } : i)));
+      }
+      setError("Could not update the incident status. Check your connection and try again.");
     }
   };
 

@@ -33,6 +33,11 @@ cp .env.example .env.local   # paste your Gemini key
 npm run dev
 ```
 
+The chat model defaults to `gemini-3.5-flash-lite` — reliably available on the free
+tier, vision-capable, and JSON-mode ready. (Newer/larger Flash models like
+`gemini-3.8-flash` frequently answer 503 "high demand" on the free tier; the LLM
+client retries transient 429/5xx errors with backoff either way.)
+
 Any other OpenAI-compatible provider (OpenAI, OpenRouter, Groq, Ollama) works by overriding
 `LLM_BASE_URL` / `LLM_MODEL` — see `.env.example`.
 
