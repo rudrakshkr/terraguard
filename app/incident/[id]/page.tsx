@@ -34,6 +34,8 @@ interface CommentItem {
   author_avatar_url?: string | null;
   body: string;
   created_at: string;
+  /** Set for not-yet-synchronized comments created offline. */
+  local_state?: "pending";
 }
 
 function downloadPDF(i: Incident, distanceLabel: string | null) {
@@ -205,6 +207,33 @@ export default function IncidentPage() {
   const confirm = async (stillPresent: boolean) => {
     setConfirming(true);
     setActionError(null);
+    // Offline: queue the confirmation in the outbox and reflect it locally.
+    // The server stays the source of truth — counts reconcile after sync.
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      const { enqueue, newOutboxId } = await import("@/lib/offline-db");
+      await enqueue({
+        id: newOutboxId(),
+        kind: "confirmation",
+        incident_id: id,
+        payload: { response: stillPresent ? "yes" : "no" },
+        created_at: new Date().toISOString(),
+        state: "pending",
+        attempts: 0,
+      });
+      setMyConfirmation({ response: stillPresent ? "yes" : "no", at: new Date().toISOString() });
+      setIncident((cur) =>
+        cur
+          ? {
+              ...cur,
+              confirmations_yes: (cur.confirmations_yes ?? 0) + (stillPresent ? 1 : 0),
+              confirmations_no: (cur.confirmations_no ?? 0) + (stillPresent ? 0 : 1),
+            }
+          : cur,
+      );
+      setNotice("Saved offline — your response will sync when you're back online.");
+      setConfirming(false);
+      return;
+    }
     try {
       const res = await authFetch(`/api/incidents/${id}`, {
         method: "POST",
@@ -232,14 +261,48 @@ export default function IncidentPage() {
 
   async function postComment(e: React.FormEvent) {
     e.preventDefault();
-    if (!commentText.trim()) return;
+    if (!commentText.trim() || postingComment) return;
     setPostingComment(true);
     setActionError(null);
+    const text = commentText.trim();
+    // Offline: keep the comment visible locally with a pending marker and
+    // queue it. It is NOT claimed as published until the server accepts it.
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      const { enqueue, newOutboxId } = await import("@/lib/offline-db");
+      const localId = newOutboxId();
+      await enqueue({
+        id: localId,
+        kind: "comment",
+        incident_id: id,
+        payload: { body: text },
+        created_at: new Date().toISOString(),
+        state: "pending",
+        attempts: 0,
+      });
+      setComments((c) => [
+        {
+          id: localId,
+          user_id: user?.id ?? "",
+          author_name: user?.display_name ?? "You",
+          author_display_name: user?.display_name ?? "You",
+          author_initials: user?.initials,
+          author_avatar_url: user?.avatar_url ?? null,
+          body: text,
+          created_at: new Date().toISOString(),
+          local_state: "pending",
+        } as CommentItem,
+        ...c,
+      ]);
+      setCommentText("");
+      setNotice("Saved offline — your update will sync when you're back online.");
+      setPostingComment(false);
+      return;
+    }
     try {
       const res = await authFetch(`/api/incidents/${id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "comment", body: commentText }),
+        body: JSON.stringify({ action: "comment", body: text }),
       });
       const data = await res.json();
       if (res.status === 401) {
@@ -617,6 +680,11 @@ export default function IncidentPage() {
                       </span>
                     )}
                     <span className="text-[13px] font-semibold">{c.author_display_name ?? c.author_name}</span>
+                    {c.local_state === "pending" && (
+                      <span className="chip chip-neutral !text-[10px]" title="Saved on this device — waiting to sync">
+                        Pending sync
+                      </span>
+                    )}
                     <span className="text-[11px] faint">{fmtAge(minutesSince(c.created_at))}</span>
                     {user && c.user_id === user.id && (
                       <button
