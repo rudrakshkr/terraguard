@@ -109,14 +109,24 @@ export default function Navbar() {
           ) : authed && user ? (
             <>
               <Link
-                href="/onboarding"
+                href="/profile"
                 className="flex h-8 items-center gap-1.5 rounded-lg border py-0 pl-1 pr-2 text-[12px] font-semibold xl:h-9 xl:gap-2 xl:pl-1.5 xl:pr-2.5 xl:text-[12.5px]"
                 style={{ borderColor: "var(--border)", color: "var(--text)" }}
-                title={`Signed in as ${user.display_name}`}
+                title={`Your profile — signed in as ${user.display_name}`}
               >
-                <span className="flex h-5.5 w-5.5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold xl:h-6 xl:w-6 xl:text-[10.5px]" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
-                  {user.initials}
-                </span>
+                {user.avatar_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={user.avatar_url}
+                    alt=""
+                    className="h-5.5 w-5.5 shrink-0 rounded-full object-cover xl:h-6 xl:w-6"
+                    style={{ border: "1px solid var(--border)" }}
+                  />
+                ) : (
+                  <span className="flex h-5.5 w-5.5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold xl:h-6 xl:w-6 xl:text-[10.5px]" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
+                    {user.initials}
+                  </span>
+                )}
                 <span className="hidden max-w-[110px] truncate xl:inline">{user.display_name.split(" ")[0]}</span>
               </Link>
               <button

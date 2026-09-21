@@ -6,6 +6,7 @@ export interface AuthUser {
   id: string;
   display_name: string;
   initials: string;
+  avatar_url?: string;
   onboarded: boolean;
   has_location: boolean;
 }

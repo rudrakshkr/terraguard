@@ -35,18 +35,9 @@ export async function GET(
     // Phone numbers/private info never enter comment records, and authors are
     // resolved from live profiles (name + avatar) — never from raw user rows.
     const rawComments = await listComments(id);
-    const comments = withAuthorProfiles(rawComments, (uid) => {
-      const u = userIdNameCache.get(uid);
-      if (u === undefined) return null; // unknown/removed user
-      return { display_name: u, avatar_url: avatarCache.get(uid) ?? null };
-    });
 
-    // If the caller is authenticated, tell them whether they already responded
-    // so the UI can show the completed state after a refresh.
-    const user = await userFromRequest(_req);
-    const mine = user ? await hasConfirmed(id, user.id) : null;
-
-    // Resolve author profiles for this incident's comments (public fields only).
+    // Resolve author profiles for this incident's comments (public fields only)
+    // BEFORE annotating, so every comment carries fresh profile data.
     const authorIds = [...new Set(rawComments.map((c) => c.user_id))];
     for (const uid of authorIds) {
       if (userIdNameCache.has(uid) && avatarCache.has(uid)) continue;
@@ -59,6 +50,16 @@ export async function GET(
         avatarCache.set(uid, null);
       }
     }
+    const comments = withAuthorProfiles(rawComments, (uid) => {
+      const u = userIdNameCache.get(uid);
+      if (u === undefined) return null; // unknown/removed user
+      return { display_name: u, avatar_url: avatarCache.get(uid) ?? null };
+    });
+
+    // If the caller is authenticated, tell them whether they already responded
+    // so the UI can show the completed state after a refresh.
+    const user = await userFromRequest(_req);
+    const mine = user ? await hasConfirmed(id, user.id) : null;
 
     // The latest ACTUAL community response time, from the per-user records
     // (not the reporter's own timestamp). Null when nobody has responded yet.
