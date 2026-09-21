@@ -146,6 +146,21 @@ export async function confirmationCounts(incidentId: string): Promise<{ yes: num
 const MAX_COMMENTS_PER_INCIDENT = 200;
 const REPEAT_WINDOW_MS = 60_000; // basic duplicate-protection window
 
+/** Comment totals for a batch of incidents (feed annotation). Never throws. */
+export async function commentCountsFor(incidents: { id: string }[]): Promise<Record<string, number>> {
+  try {
+    const d = await loadDb();
+    const counts: Record<string, number> = {};
+    for (const i of incidents) counts[i.id] = 0;
+    for (const c of d.comments) {
+      if (counts[c.incident_id] !== undefined) counts[c.incident_id] += 1;
+    }
+    return counts;
+  } catch {
+    return {};
+  }
+}
+
 export async function listComments(incidentId: string): Promise<CommentRecord[]> {
   const d = await loadDb();
   return d.comments

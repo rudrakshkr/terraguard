@@ -3,7 +3,7 @@ import { listIncidents, addIncident } from "@/lib/store";
 import { LOCATIONS } from "@/lib/threat";
 import { findRelated, haversineKm, fmtDistance } from "@/lib/geo";
 import { userFromRequest, publicUser } from "@/lib/auth";
-import { listComments } from "@/lib/community-store";
+import { listComments, commentCountsFor } from "@/lib/community-store";
 import type { IncidentAnalysis, Incident, Severity } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -46,7 +46,14 @@ export async function GET(req: NextRequest) {
           }));
       }
     }
-    return NextResponse.json({ incidents });
+    // Comment counts annotate the feed so cards can show real activity
+    // without the client making one request per incident.
+    const withCounts = await commentCountsFor(incidents);
+    const annotated = incidents.map((i) => ({
+      ...i,
+      comment_count: withCounts[i.id] ?? 0,
+    }));
+    return NextResponse.json({ incidents: annotated });
   } catch (err) {
     console.error("[api/incidents GET]", err);
     return NextResponse.json({ error: "Could not load incidents." }, { status: 500 });

@@ -126,6 +126,7 @@ export interface Incident {
   confirmations_yes?: number;
   confirmations_no?: number;
   related_ids?: string[]; // associated reports describing the same event
+  comment_count?: number; // annotated on feed responses by the API
 }
 
 export interface IncidentFilters {

@@ -177,7 +177,7 @@ function IncidentRow({ i, km }: { i: Incident; km: number | null }) {
               ? "Resolved"
               : activityLabel(i.confirmations_yes ?? 0, i.last_confirmed_at ?? i.created_at, i.origin === "seed")}
           </span>
-          <span className="flex items-center gap-1"><MessageSquare className="h-3.5 w-3.5" />{(i as Incident & { comment_count?: number }).comment_count ?? 0} comments</span>
+          <span className="flex items-center gap-1"><MessageSquare className="h-3.5 w-3.5" />{i.comment_count ?? 0} {i.comment_count === 1 ? "comment" : "comments"}</span>
           {i.origin === "seed" && <span className="chip chip-neutral">DEMO DATA</span>}
         </div>
       </Link>
