@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import type { Incident } from "@/lib/types";
 import { SEVERITIES, INCIDENT_TYPES, LOCATIONS } from "@/lib/threat";
+import { fmtDate } from "@/lib/labels";
 import { needsReconfirmation, detectClusters, fmtAge, minutesSince } from "@/lib/geo";
 import { SeverityChip, VerificationChip, OriginChip } from "@/components/Badge";
 import { Spinner } from "@/components/Spinner";
@@ -156,21 +157,21 @@ export default function DashboardPage() {
             HillSense Command Center
           </h1>
           <p className="mt-2 text-[13.5px] muted">
-            Incident Intelligence — Demonstration Data. Operations view for responders; the public
+            Incident Intelligence — Demonstration Data. Operations monitoring &amp; triage; the public
             feed at <Link href="/" className="underline" style={{ color: "var(--accent)" }}>/</Link> shows
-            only verified public alerts.
+            only safety-checked public alerts.
           </p>
         </div>
         <div className="btn-row sm:shrink-0">
           {rag && (
             <>
-              <span className="chip chip-neutral max-sm:!whitespace-normal max-sm:!text-left" title="Retrieval corpus status">
+              <span className="chip chip-neutral max-sm:!whitespace-normal max-sm:!text-left" title="Safety knowledge base status">
                 <BookOpenCheck className="h-3 w-3 shrink-0" />
-                RAG · {rag.docs} docs / {rag.chunks} chunks · {rag.embedder === "api" ? "API embeddings" : "local embeddings"}
+                Safety knowledge base · {rag.docs} sources
               </span>
               <span className={`chip ${rag.aiAvailable ? "chip-low" : "chip-warn"}`}>
                 <Cpu className="h-3 w-3 shrink-0" />
-                {rag.aiAvailable ? "LLM connected" : "Heuristic mode — no API key"}
+                {rag.aiAvailable ? "AI services available" : "AI services limited"}
               </span>
             </>
           )}
@@ -247,8 +248,8 @@ export default function DashboardPage() {
         <div className="card mt-4 p-4">
           <h2 className="flex items-center gap-2 text-[13px] font-semibold">
             <Layers className="h-4 w-4" style={{ color: "var(--accent)" }} />
-            AI-detected incident clusters
-            <span className="font-normal muted">— geographically & temporally related active reports</span>
+            Related incident clusters
+            <span className="font-normal muted">— reports linked by location and time.</span>
           </h2>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
             {clusters.map((c) => (
@@ -292,15 +293,15 @@ export default function DashboardPage() {
           </select>
           <select value={status} onChange={(e) => setStatus(e.target.value)} className="input !py-2 !text-[12.5px]">
             <option value="">All statuses</option>
-            <option>Open</option>
-            <option>Responding</option>
-            <option>Resolved</option>
+            <option value="Open">Open</option>
+            <option value="Responding">Active</option>
+            <option value="Resolved">Resolved</option>
           </select>
           <select value={verification} onChange={(e) => setVerification(e.target.value)} className="input !py-2 !text-[12.5px]">
             <option value="">All verification</option>
-            <option value="verified">AI verified</option>
+            <option value="verified">AI check passed</option>
             <option value="needs_review">Needs review</option>
-            <option value="rejected">Rejected</option>
+            <option value="rejected">Not published</option>
           </select>
           <select value={location} onChange={(e) => setLocation(e.target.value)} className="input !py-2 !text-[12.5px]">
             <option value="">All locations</option>
@@ -354,7 +355,9 @@ export default function DashboardPage() {
                       <td className="py-3 pr-4">{i.incident_type}</td>
                       <td className="py-3 pr-4"><SeverityChip severity={i.severity} /></td>
                       <td className="py-3 pr-4"><VerificationChip verification={i.verification ?? (i.needs_verification ? "needs_review" : undefined)} /></td>
-                      <td className="py-3 pr-4 text-[12px] muted">{fmtAge(minutesSince(i.created_at))}</td>
+                      <td className="py-3 pr-4 text-[12px] muted">
+                        {i.origin === "seed" ? fmtDate(i.created_at) : fmtAge(minutesSince(i.created_at))}
+                      </td>
                       <td className="py-3 pr-4">
                         <select
                           value={i.status}
@@ -362,9 +365,9 @@ export default function DashboardPage() {
                           className="input !w-auto !px-1.5 !py-1 !text-[11.5px]"
                           aria-label={`Status for ${i.id}`}
                         >
-                          <option>Open</option>
-                          <option>Responding</option>
-                          <option>Resolved</option>
+                          <option value="Open">Open</option>
+                          <option value="Responding">Active</option>
+                          <option value="Resolved">Resolved</option>
                         </select>
                       </td>
                       <td className="py-3 text-right">
@@ -379,7 +382,7 @@ export default function DashboardPage() {
           </table>
         </div>
         <p className="mt-3 text-[11px] faint">
-          Status changes persist immediately. All rows are demonstration data — nothing here is a live government alert.
+          Status changes persist immediately. All rows are example data — nothing here is a live alert.
         </p>
       </div>
     </div>

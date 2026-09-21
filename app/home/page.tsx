@@ -7,6 +7,7 @@ import { MapPin, Clock, Radio, ShieldCheck, Phone, Navigation, Siren, MessageSqu
 import type { Incident } from "@/lib/types";
 import { useAuth, authFetch } from "@/hooks/useAuth";
 import { haversineKm, fmtDistance, fmtAge, freshnessOf, minutesSince } from "@/lib/geo";
+import { exampleReportLabel, activityLabel } from "@/lib/labels";
 import { Spinner } from "@/components/Spinner";
 
 /**
@@ -94,7 +95,7 @@ export default function HomePage() {
             Welcome{user?.display_name ? `, ${user.display_name.split(" ")[0]}` : ""}
           </h1>
           <p className="mt-1.5 text-[14px] leading-relaxed muted">
-            {profileLoc ? "Verified hazards near your saved location." : "Verified hazards across Himachal Pradesh — add a location on your profile for nearby alerts."}
+            {profileLoc ? "Safety-checked community reports near your saved location." : "Safety-checked community reports across Himachal Pradesh — add a location on your profile for nearby alerts."}
           </p>
         </div>
         <div className="btn-row sm:shrink-0">
@@ -110,7 +111,7 @@ export default function HomePage() {
           <ShieldCheck className="mx-auto h-8 w-8" style={{ color: "var(--low)" }} />
           <p className="mt-3 font-semibold">No verified hazards right now</p>
           <p className="mx-auto mt-1 max-w-md text-[13.5px] muted">
-            When AI-verified community reports are published near you, they will appear here first.
+            When safety-checked community reports are published near you, they will appear here first.
           </p>
         </div>
       ) : (
@@ -137,8 +138,8 @@ export default function HomePage() {
         </span>
         <p className="min-w-0 muted">
           <strong style={{ color: "var(--danger)" }}>In a life-threatening emergency, call 112.</strong>{" "}
-          HillSense shows community reports verified by AI for evidence consistency — decision support,
-          not an official alert channel.
+          HillSense shows community reports whose evidence passed an AI consistency check — decision
+          support, not an official alert channel.
         </p>
       </div>
     </div>
@@ -146,7 +147,6 @@ export default function HomePage() {
 }
 
 function IncidentRow({ i, km }: { i: Incident; km: number | null }) {
-  const fresh = freshnessOf(i);
   return (
     <li>
       <Link href={`/incident/${i.id}`} className="card fade-up block p-4 transition hover:-translate-y-px" style={{ borderColor: "var(--border)" }}>
@@ -158,7 +158,7 @@ function IncidentRow({ i, km }: { i: Incident; km: number | null }) {
           <span className="text-[15px] font-semibold">{i.incident_type}</span>
           <span className="chip chip-info ml-auto">
             <ShieldCheck className="h-3 w-3" />
-            AI VERIFIED
+            AI CHECK PASSED
           </span>
         </div>
         <p className="mt-2 text-[14px] leading-relaxed">{i.summary}</p>
@@ -167,10 +167,15 @@ function IncidentRow({ i, km }: { i: Incident; km: number | null }) {
             <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{fmtDistance(km)} · {i.location}</span>
           )}
           {(km == null || !Number.isFinite(km)) && <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{i.location}</span>}
-          <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5" />Reported {fmtAge(minutesSince(i.created_at))}</span>
+          <span className="flex items-center gap-1">
+            <Clock className="h-3.5 w-3.5" />
+            {i.origin === "seed" ? exampleReportLabel(i.created_at) : `Reported ${fmtAge(minutesSince(i.created_at))}`}
+          </span>
           <span className="flex items-center gap-1">
             <Radio className="h-3.5 w-3.5" />
-            {i.status === "Resolved" ? "Resolved" : fresh === "fresh" ? `Last confirmed ${fmtAge(minutesSince(i.last_confirmed_at ?? i.created_at))}` : fresh === "recent" ? "Awaiting reconfirmation" : "Needs reconfirmation"}
+            {i.status === "Resolved"
+              ? "Resolved"
+              : activityLabel(i.confirmations_yes ?? 0, i.last_confirmed_at ?? i.created_at, i.origin === "seed")}
           </span>
           <span className="flex items-center gap-1"><MessageSquare className="h-3.5 w-3.5" />{(i as Incident & { comment_count?: number }).comment_count ?? 0} comments</span>
           {i.origin === "seed" && <span className="chip chip-neutral">DEMO DATA</span>}

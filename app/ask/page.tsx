@@ -62,8 +62,8 @@ export default function AskPage() {
       <div className="mb-6">
         <h1 className="text-[22px] font-bold tracking-tight sm:text-2xl">Ask HillSense</h1>
         <p className="mt-1.5 text-[14px] leading-relaxed muted">
-          Mountain-safety questions answered from the HillSense knowledge base — every answer shows
-          the sources it was grounded in.
+          Ask about landslides, floods, evacuation and mountain safety. Every answer shows the
+          safety guidance it used.
         </p>
       </div>
 
@@ -102,14 +102,14 @@ export default function AskPage() {
                 <div className="mb-2 flex items-center gap-2">
                   <BookOpenCheck className="h-4 w-4" style={{ color: "var(--low)" }} />
                   <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--low)" }}>
-                    {t.a.aiAvailable ? "Grounded answer" : "Knowledge-base passages"}
+                    {t.a.aiAvailable ? "Safety guidance used" : "Safety knowledge base"}
                   </span>
                 </div>
                 <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed">{t.a.answer}</p>
               </div>
             ) : (
               <div className="card flex items-center gap-2.5 p-4 text-[13px] muted">
-                <Spinner /> Retrieving knowledge and composing an answer…
+                <Spinner /> Preparing an answer with relevant safety guidance…
               </div>
             )}
           </div>
@@ -132,7 +132,7 @@ export default function AskPage() {
           <input
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            placeholder="Ask about landslide signs, flash floods, evacuation…"
+            placeholder="Ask about landslides, floods, evacuation and mountain safety…"
             className="flex-1 bg-transparent px-3 py-2 text-[13.5px] focus:outline-none"
             style={{ color: "var(--text)" }}
             aria-label="Your question"

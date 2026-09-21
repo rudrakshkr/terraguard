@@ -62,9 +62,7 @@ export default function EvidencePanel({ result }: { result: AnalyzeResponse }) {
                     <div key={r} className="rounded-md border p-2.5" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px]">
                         <span className="font-semibold" style={{ color: "var(--accent)" }}>[{r + 1}] {s.title}</span>
-                        <span className="mono text-[10px] faint">
-                          {s.doc}.md · similarity {s.score.toFixed(2)}
-                        </span>
+                        <span className="mono text-[10px] faint">{s.doc}</span>
                         {s.organization && <span className="text-[10.5px] muted">· {s.organization}</span>}
                       </div>
                       <p className="mt-1 text-[12px] leading-relaxed muted">

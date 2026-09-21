@@ -38,14 +38,14 @@ const PLAYBOOK: Record<IncidentType, Pick<IncidentAnalysis, "immediate_actions" 
       "Do not return to collect belongings until the slope is declared stable",
     ],
     recommended_response:
-      "Dispatch a patrol to confirm the blockage extent, divert traffic via an alternate route, and request the PWD/SDRF for debris clearance. Keep residents above the slide zone informed.",
+      "Divert traffic via an alternate route, notify local emergency services about the blockage, and keep residents above the slide zone informed. Follow district authorities' instructions.",
     risk: ["Unstable slope material", "Continued rainfall weakening the hillside", "Vehicles stuck behind the blockage"],
   },
   Rockfall: {
     immediate_actions: [
       "Stop traffic at a safe distance from the falling-rock zone",
       "Clear bystanders from overhang and cliff base areas",
-      "Report the exact chainage/landmark to highway authorities",
+      "Report the exact landmark to local authorities",
       "Check for vehicles hit or trapped by falling rocks",
     ],
     avoid: [
@@ -54,7 +54,7 @@ const PLAYBOOK: Record<IncidentType, Pick<IncidentAnalysis, "immediate_actions" 
       "Do not walk across rock debris without checking for further falls",
     ],
     recommended_response:
-      "Deploy traffic control at both ends, request NH/PWD rock-clearance machinery, and inspect the slope for loose overhang before reopening.",
+      "Keep traffic control at both ends, notify local authorities to arrange rock-clearance, and inspect the slope for loose overhang before reopening.",
     risk: ["Loose rock overhang above the road", "Vibration from traffic triggering further falls", "Poor visibility around the bend"],
   },
   "Flash Flood": {
@@ -70,7 +70,7 @@ const PLAYBOOK: Record<IncidentType, Pick<IncidentAnalysis, "immediate_actions" 
       "Avoid returning for belongings left in the flood path",
     ],
     recommended_response:
-      "Issue an immediate local alert along the river, move tourists and locals to designated shelters, and coordinate with the SDRF for any rescue.",
+      "Issue an immediate local alert along the river, move tourists and locals to designated shelters, and notify local emergency services. Follow district authorities' instructions.",
     risk: ["Rapidly rising river level", "Tourists near the riverbank", "Logjam or debris dam upstream"],
   },
   Flood: {
@@ -100,7 +100,7 @@ const PLAYBOOK: Record<IncidentType, Pick<IncidentAnalysis, "immediate_actions" 
       "Avoid unverified shortcuts on unstable hill roads",
     ],
     recommended_response:
-      "Coordinate with PWD/BRO for clearance machinery, publish an alternate route, and update stranded commuters at regular intervals.",
+      "Notify local authorities to arrange clearance machinery, publish an alternate route, and update stranded commuters at regular intervals.",
     risk: ["Long queue of stranded vehicles", "Single-road dependency of nearby villages", "Risk of secondary slope failure at the site"],
   },
   "Forest Fire": {
@@ -114,7 +114,7 @@ const PLAYBOOK: Record<IncidentType, Pick<IncidentAnalysis, "immediate_actions" 
       "Avoid dry grass and deodar slopes during high winds",
     ],
     recommended_response:
-      "Alert the Forest Department fire crew, prepare nearby villages for evacuation, and monitor wind direction until the line is contained.",
+      "Notify local emergency services and the fire crew, prepare nearby villages for evacuation, and monitor wind direction until the line is contained. Follow district authorities' instructions.",
     risk: ["Wind-driven spread toward habitation", "Dry pine-needle litter acting as fuel", "Smoke reducing visibility on highways"],
   },
   Avalanche: {

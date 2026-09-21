@@ -89,8 +89,8 @@ export default function Navbar() {
           <Link
             href="/dashboard"
             className="btn btn-ghost btn-header-sm btn-icon hidden xl:inline-flex"
-            aria-label="Command Center"
-            title="Command Center (operations view)"
+            aria-label="Operations monitoring & triage"
+            title="Operations monitoring & triage"
           >
             <LayoutDashboard className="h-4 w-4" />
           </Link>

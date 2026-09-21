@@ -16,7 +16,7 @@ import { useAuth, authFetch } from "@/hooks/useAuth";
 import DecisionTrace from "@/components/DecisionTrace";
 import EvidencePanel from "@/components/EvidencePanel";
 import SourcesPanel from "@/components/SourcesPanel";
-import { SeverityChip, ConfidenceChip, ModeBadge } from "@/components/Badge";
+import { SeverityChip, ModeBadge, EvidenceChip } from "@/components/Badge";
 import { Spinner } from "@/components/Spinner";
 
 /** Downscale large photos in the browser so uploads stay fast. */
@@ -33,7 +33,7 @@ async function prepareImage(file: File): Promise<File> {
 }
 
 const VERDICT_STYLE: Record<string, { chip: string; icon: typeof ShieldCheck; label: string }> = {
-  verified: { chip: "chip-low", icon: ShieldCheck, label: "VERIFIED" },
+  verified: { chip: "chip-low", icon: ShieldCheck, label: "AI CHECK PASSED" },
   needs_review: { chip: "chip-warn", icon: AlertTriangle, label: "NEEDS REVIEW" },
   rejected: { chip: "chip-critical", icon: Ban, label: "REJECTED" },
 };
@@ -279,8 +279,8 @@ export default function ReportPage() {
       <header className="mb-6">
         <h1 className="text-[22px] font-bold tracking-tight sm:text-2xl">Report a hazard</h1>
         <p className="mt-1.5 text-[14px] leading-relaxed muted">
-          Describe what you can see. AI checks the evidence for consistency before anything is
-          published to people nearby. Reporting as <strong>{user?.display_name}</strong>.
+          Describe what you can see. Your report is checked for evidence consistency before
+          anything is published to people nearby. Reporting as <strong>{user?.display_name}</strong>.
         </p>
       </header>
 
@@ -415,7 +415,7 @@ export default function ReportPage() {
                 style={{ borderColor: "var(--border)" }}
               >
                 <ImagePlus className="h-5 w-5" aria-hidden />
-                Add a photo of the hazard — AI reviews it together with your description
+                Add a photo of the hazard — it is reviewed together with your description
               </button>
             )}
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => onPickImage(e.target.files?.[0] ?? null)} />
@@ -541,7 +541,7 @@ export default function ReportPage() {
               )}
               {locValid && !loc?.approximate && (
                 <p className="mt-2 text-[12px]" style={{ color: "var(--low)" }}>
-                  Resolved from your device coordinates via OpenStreetMap. Edit if needed before publishing.
+                  Location detected from your device. Please verify before submitting.
                 </p>
               )}
               {loc && !locValid && (
@@ -584,7 +584,7 @@ export default function ReportPage() {
           <div className="btn-row">
             <button type="button" onClick={analyze} disabled={!canAnalyze} className="btn btn-primary">
               {analyzing ? <Spinner className="h-4 w-4" /> : <Search className="h-4 w-4" aria-hidden />}
-              {analyzing ? "Verifying report…" : "Submit for AI verification"}
+              {analyzing ? "Verifying report…" : "Submit report"}
             </button>
             {result && result.verification.status !== "rejected" && (
               <button type="button" onClick={save} disabled={saving} className="btn btn-primary">
@@ -626,13 +626,12 @@ export default function ReportPage() {
 
               <div className="card p-5">
                 <div className="flex flex-wrap items-center gap-3">
-                  <h2 className="text-[17px] font-bold">AI assessment</h2>
-                  <span className="ml-auto flex items-center gap-2 text-[12.5px] muted">
-                    assessment confidence:
-                    <ConfidenceChip
-                      score={result.analysis.confidence}
-                      heuristic={!result.aiAvailable}
-                      needsVerification={result.analysis.needs_verification}
+                  <h2 className="text-[17px] font-bold">Assessment</h2>
+                  <span className="ml-auto">
+                    <EvidenceChip
+                      assessment={
+                        verdict.status === "verified" ? "Consistent" : verdict.status === "needs_review" ? "Unclear" : "Conflicting"
+                      }
                     />
                   </span>
                 </div>
@@ -683,6 +682,10 @@ export default function ReportPage() {
 
               <EvidencePanel result={result} />
               <SourcesPanel sources={result.sources} />
+              <p className="text-[11.5px] muted mt-2">
+                AI checks whether the available report evidence is consistent. It does not determine whether
+                a person is truthful.
+              </p>
               <p className="text-[11.5px] faint">
                 HillSense provides decision support only — it is not an official alert or emergency
                 service. For life-threatening emergencies, call 112.
@@ -694,14 +697,13 @@ export default function ReportPage() {
         {/* -------- side column -------- */}
         <aside className="space-y-4">
           <div className="card p-5">
-            <h2 className="mb-3 text-[14px] font-bold">What happens next?</h2>
-            <ol className="space-y-3 text-[13px] leading-relaxed muted">
+            <h2 className="mb-3 text-[14px] font-bold">What happens next?</h2>              <ol className="space-y-3 text-[13px] leading-relaxed muted">
               {[
-                "AI reads your description, photo and hazard details",
+                "Your description, photo and hazard details are read",
                 "Evidence is checked for consistency",
                 "Nearby reports are checked for duplicates & corroboration",
                 "Relevant safety guidance is attached",
-                "Verified hazards are published to people in the area",
+                "Reports with consistent evidence are published to people nearby",
               ].map((s, i) => (
                 <li key={s} className="flex gap-2.5">
                   <span className="mono flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold" style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>{i + 1}</span>
@@ -711,11 +713,11 @@ export default function ReportPage() {
             </ol>
           </div>
           <div className="card p-5">
-            <h2 className="mb-2 text-[14px] font-bold">Publication rules</h2>
+            <h2 className="mb-2 text-[14px] font-bold">How reports are reviewed</h2>
             <ul className="space-y-2.5 text-[12.5px] leading-relaxed muted">
-              <li className="flex gap-2"><ShieldCheck className="h-4 w-4 shrink-0" style={{ color: "var(--low)" }} aria-hidden /> Consistent evidence → published as a public alert.</li>
-              <li className="flex gap-2"><AlertTriangle className="h-4 w-4 shrink-0" style={{ color: "var(--warn)" }} aria-hidden /> Unclear or thin evidence → held for review, not shown publicly.</li>
-              <li className="flex gap-2"><Ban className="h-4 w-4 shrink-0" style={{ color: "var(--danger)" }} aria-hidden /> Conflicting image/description → not published.</li>
+              <li className="flex gap-2"><ShieldCheck className="h-4 w-4 shrink-0" style={{ color: "var(--low)" }} aria-hidden /> Consistent evidence → eligible for public display.</li>
+              <li className="flex gap-2"><AlertTriangle className="h-4 w-4 shrink-0" style={{ color: "var(--warn)" }} aria-hidden /> Unclear evidence → sent for review.</li>
+              <li className="flex gap-2"><Ban className="h-4 w-4 shrink-0" style={{ color: "var(--danger)" }} aria-hidden /> Conflicting evidence → held back for review.</li>
             </ul>
           </div>
         </aside>

@@ -112,7 +112,8 @@ export async function listIncidents(
         i.location.toLowerCase().includes(q),
     );
   }
-  // Public feed: only AI-verified or seeded incidents are published.
+  // Public feed: only incidents that passed the AI evidence check (or seeded
+  // examples) are published.
   if (f.public) {
     list = list.filter(
       (i) => i.publication === "public" && i.verification === "verified" && i.status !== "Resolved",

@@ -11,6 +11,7 @@ import type { Incident } from "@/lib/types";
 import { useLocationPreference, PRESETS } from "@/hooks/useLocationPreference";
 import { useAuth } from "@/hooks/useAuth";
 import { haversineKm, fmtDistance, fmtAge, freshnessOf, minutesSince, needsReconfirmation } from "@/lib/geo";
+import { exampleReportLabel, activityLabel } from "@/lib/labels";
 import { Spinner } from "@/components/Spinner";
 
 const IncidentMap = dynamic(() => import("@/components/IncidentMap"), {
@@ -25,15 +26,11 @@ const IncidentMap = dynamic(() => import("@/components/IncidentMap"), {
 /** Reusable hazard card — one component, one padding system, aligned metadata. */
 function HazardCard({ incident, km }: { incident: Incident; km: number | null }) {
   const i = incident;
-  const fresh = freshnessOf(i);
+  const isExample = i.origin === "seed";
   const confirmLabel =
     i.status === "Resolved"
       ? "Resolved"
-      : fresh === "fresh"
-        ? `Last confirmed ${fmtAge(minutesSince(i.last_confirmed_at ?? i.created_at))}`
-        : fresh === "recent"
-          ? "Awaiting reconfirmation"
-          : "Needs reconfirmation";
+      : activityLabel(i.confirmations_yes ?? 0, i.last_confirmed_at ?? i.created_at, isExample);
 
   return (
     <li>
@@ -42,7 +39,7 @@ function HazardCard({ incident, km }: { incident: Incident; km: number | null })
         className="card fade-up flex flex-col gap-2.5 p-4 transition hover:-translate-y-px sm:p-5"
         aria-label={`${i.incident_type}, ${i.severity} severity`}
       >
-        {/* Header row: severity + type … AI VERIFIED pinned right */}
+        {/* Header row: severity + type … AI CHECK PASSED pinned right */}
         <div className="flex items-center gap-2.5">
           <span className={`chip chip-${i.severity.toLowerCase()} shrink-0`}>
             <span className="dot" />
@@ -51,7 +48,7 @@ function HazardCard({ incident, km }: { incident: Incident; km: number | null })
           <h3 className="min-w-0 flex-1 truncate text-[15px] font-semibold leading-snug">{i.incident_type}</h3>
           <span className="chip chip-info shrink-0">
             <ShieldCheck className="h-3 w-3" />
-            AI VERIFIED
+            AI CHECK PASSED
           </span>
         </div>
 
@@ -66,7 +63,7 @@ function HazardCard({ incident, km }: { incident: Incident; km: number | null })
           </span>
           <span>
             <Clock className="h-3.5 w-3.5" />
-            Reported {fmtAge(minutesSince(i.created_at))}
+            {isExample ? exampleReportLabel(i.created_at) : `Reported ${fmtAge(minutesSince(i.created_at))}`}
           </span>
           <span>
             <Radio className="h-3.5 w-3.5" />
@@ -101,7 +98,7 @@ export default function NearbyPage() {
     return () => clearTimeout(t);
   }, []);
 
-  // Public feed = AI VERIFIED, publicly published alerts only.
+  // Public feed = safety-checked, publicly published alerts only.
   const publicIncidents = useMemo(
     () =>
       (incidents ?? []).filter(
@@ -270,7 +267,7 @@ export default function NearbyPage() {
           <p className="mx-auto mt-1.5 max-w-md text-[13.5px] leading-relaxed muted">
             {loc
               ? "Nothing within your selected radius right now. Alerts appear here as soon as community reports are verified."
-              : "Choose a location to see verified public alerts, or report a hazard you have seen."}
+              : "Choose a location to see safety-checked public alerts, or report a hazard you have seen."}
           </p>
         </div>
       ) : view === "map" ? (
@@ -312,7 +309,7 @@ export default function NearbyPage() {
           </span>
           <p className="min-w-0 muted">
             <strong style={{ color: "var(--danger)" }}>In a life-threatening emergency, call 112.</strong>{" "}
-            HillSense shows community reports verified by AI for evidence consistency — it is decision
+            HillSense shows community reports whose evidence passed an AI consistency check — it is decision
             support, not an official alert channel. Always follow instructions from your district administration.
           </p>
         </div>

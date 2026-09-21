@@ -10,9 +10,10 @@ import {
   SendHorizontal, CheckCircle2, Layers, Trash2, Loader2,
 } from "lucide-react";
 import type { Incident } from "@/lib/types";
-import { fmtDateTime, confidenceBand, originMeta } from "@/lib/threat";
+import { fmtDateTime, originMeta } from "@/lib/threat";
 import { fmtDistance, fmtAge, minutesSince, freshnessOf, haversineKm } from "@/lib/geo";
-import { SeverityChip, StatusChip, VerificationChip, OriginChip, ConfidenceChip, FreshnessChip } from "@/components/Badge";
+import { SeverityChip, StatusChip, VerificationChip, OriginChip, FreshnessChip } from "@/components/Badge";
+import { fmtDate, exampleReportLabel } from "@/lib/labels";
 import SourcesPanel from "@/components/SourcesPanel";
 import { Spinner } from "@/components/Spinner";
 import { useAuth, authFetch } from "@/hooks/useAuth";
@@ -47,7 +48,7 @@ function downloadPDF(i: Incident, distanceLabel: string | null) {
   doc.setTextColor(90, 104, 120);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.text("AI-verified community report for situational awareness — not an official government document.", M, 56);
+  doc.text("AI-checked community report for situational awareness — not an official government document.", M, 56);
   doc.text(`Generated ${new Date().toLocaleString("en-IN")}`, M, 70);
   y = 116;
 
@@ -93,10 +94,10 @@ function downloadPDF(i: Incident, distanceLabel: string | null) {
   doc.text(`${i.id} — ${i.incident_type} (${i.severity})`, M, y); y += 22;
   doc.setFont("helvetica", "normal"); doc.setFontSize(10.5); doc.setTextColor(90, 104, 120);
   doc.text(`Location: ${i.location}${i.coords_approximate ? " (approximate)" : ""}${distanceLabel ? ` · ${distanceLabel}` : ""}`, M, y); y += 14;
-  doc.text(`Reported: ${fmtDateTime(i.created_at)}   |   Status: ${i.status === "Open" ? "ACTIVE" : i.status.toUpperCase()}`, M, y); y += 14;
-  const band = confidenceBand(i.confidence);
-  doc.text(`Verification: ${i.verification === "verified" ? "AI VERIFIED (evidence consistency)" : i.verification === "needs_review" ? "NEEDS REVIEW" : "NOT PUBLISHED"}   |   Assessment confidence: ${band}`, M, y); y += 14;
-  doc.text(`Origin: ${originMeta(i.origin).label}   |   Last confirmed: ${fmtDateTime(i.last_confirmed_at ?? i.created_at)}`, M, y);
+  doc.text(`Reported: ${i.origin === "seed" ? fmtDate(i.created_at) : fmtDateTime(i.created_at)}   |   Status: ${i.status === "Open" ? "ACTIVE" : i.status.toUpperCase()}`, M, y); y += 14;
+  const assessment = i.verification === "verified" ? "Consistent" : i.verification === "needs_review" ? "Unclear" : "Conflicting";
+  doc.text(`Verification: ${i.verification === "verified" ? "AI CHECK PASSED (evidence consistency)" : i.verification === "needs_review" ? "NEEDS REVIEW" : "NOT PUBLISHED"}   |   Evidence assessment: ${assessment}`, M, y); y += 14;
+  doc.text(`Origin: ${originMeta(i.origin).label}   |   ${i.confirmations_yes ? `Community confirmation (${i.confirmations_yes})` : "Last updated"}: ${fmtDateTime(i.last_confirmed_at ?? i.created_at)}`, M, y);
   y += 26;
 
   section("What happened");
@@ -116,7 +117,7 @@ function downloadPDF(i: Incident, distanceLabel: string | null) {
     bullets(i.verification_reasons);
   }
   section("Source references");
-  if (i.sources.length) bullets(i.sources.map((s, n) => `[${n + 1}] ${s.title}${s.doc ? ` (knowledge-base/${s.doc}.md)` : ""}`));
+  if (i.sources.length) bullets(i.sources.map((s, n) => `[${n + 1}] ${s.title}${s.doc ? ` (${s.doc})` : ""}`));
   else body("None retrieved.");
   doc.setFontSize(8.5);
   doc.setTextColor(130, 140, 150);
@@ -286,8 +287,8 @@ export default function IncidentPage() {
   const alreadyResponded = myConfirmation !== null;
   const timeline: { label: string; at: string }[] = [
     { label: `Report submitted (${originMeta(i.origin).label})`, at: i.created_at },
-    ...(i.verification ? [{ label: `AI verification: ${i.verification === "verified" ? "VERIFIED" : i.verification === "needs_review" ? "NEEDS REVIEW" : "NOT PUBLISHED"}`, at: i.created_at }] : []),
-    ...((i.sources?.length ?? 0) > 0 ? [{ label: `Safety sources retrieved (${i.sources.length})`, at: i.created_at }] : []),
+    ...(i.verification ? [{ label: `AI evidence check: ${i.verification === "verified" ? "passed" : i.verification === "needs_review" ? "needs review" : "failed — not published"}`, at: i.created_at }] : []),
+    ...((i.sources?.length ?? 0) > 0 ? [{ label: `Safety guidance attached (${i.sources.length})`, at: i.created_at }] : []),
     ...(i.pipeline?.saved_at ? [{ label: "Published / saved", at: i.pipeline.saved_at }] : []),
     ...(i.status_history ?? []).slice(1).map((h) => ({ label: `Status → ${h.status}`, at: h.at })),
   ];
@@ -324,18 +325,27 @@ export default function IncidentPage() {
               {distance ?? i.location}{distance ? ` · ${i.location}` : ""}
               {i.coords_approximate ? " (approximate location)" : ""}
             </span>
-            <span className="flex items-center gap-1.5"><Clock className="h-4 w-4" />Reported {fmtAge(minutesSince(i.created_at))}</span>
+            <span className="flex items-center gap-1.5">
+              <Clock className="h-4 w-4" />
+              {i.origin === "seed" ? exampleReportLabel(i.created_at) : `Reported ${fmtAge(minutesSince(i.created_at))}`}
+            </span>
           </p>
           <p className="mt-3 text-[15.5px] leading-relaxed">{i.summary}</p>
         </header>
 
         {/* Freshness + corroboration */}
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <FreshnessChip fresh={fresh} minsSinceConfirmed={minsConfirmed} />
-          {i.confirmations_yes != null && (
-            <span className="chip chip-neutral">
-              {i.confirmations_yes} confirmation{i.confirmations_yes === 1 ? "" : "s"}
-              {i.confirmations_no ? ` · ${i.confirmations_no} cleared` : ""}
+          {i.origin === "seed" ? (
+            <span className="chip chip-neutral" title="Static demonstration data — timestamps are examples, not live">
+              <span className="dot" />
+              {exampleReportLabel(i.created_at)}
+            </span>
+          ) : (
+            <FreshnessChip fresh={fresh} minsSinceConfirmed={minsConfirmed} />
+          )}
+          {(i.confirmations_yes ?? 0) > 0 && (
+            <span className="chip chip-info">
+              Community confirmation · {i.confirmations_yes} {i.confirmations_yes === 1 ? "person" : "people"} confirmed
             </span>
           )}
           {(i.related_ids?.length ?? 0) > 0 && (
@@ -405,7 +415,7 @@ export default function IncidentPage() {
           <section className="mt-6">
             <h2 className="flex items-center gap-2 text-[15px] font-bold">
               <ShieldCheck className="h-4.5 w-4.5" style={{ color: "var(--low)" }} />
-              Why was this report verified?
+              {i.verification === "verified" ? "Why this report passed the AI check" : "Why this report is in review"}
             </h2>
             <ul className="check-list mt-2.5 space-y-1.5">
               {(i.verification_reasons?.length ? i.verification_reasons : ["Evidence consistency checked by the HillSense pipeline"]).map((r, n) => (
@@ -488,12 +498,24 @@ export default function IncidentPage() {
             <div className="mt-1"><StatusChip status={i.status} /></div>
           </div>
           <div className="min-w-0">
-            <div className="text-[10.5px] font-bold uppercase tracking-wider faint">Last confirmed</div>
-            <div className="mt-1">{fmtAge(minsConfirmed)}</div>
+            <div className="text-[10.5px] font-bold uppercase tracking-wider faint">
+              {(i.confirmations_yes ?? 0) > 0 ? "Community confirmation" : "Last updated"}
+            </div>
+            <div className="mt-1">
+              {(i.confirmations_yes ?? 0) > 0
+                ? `${i.confirmations_yes} confirmation${i.confirmations_yes === 1 ? "" : "s"} · ${i.origin === "seed" ? fmtDate(i.last_confirmed_at ?? i.created_at) : fmtAge(minsConfirmed)}`
+                : i.origin === "seed"
+                  ? fmtDate(i.last_confirmed_at ?? i.created_at)
+                  : fmtAge(minsConfirmed)}
+            </div>
           </div>
           <div className="min-w-0">
-            <div className="text-[10.5px] font-bold uppercase tracking-wider faint">Assessment confidence</div>
-            <div className="mt-1"><ConfidenceChip compact score={i.confidence} heuristic={i.origin !== "ai"} needsVerification={i.needs_verification} /></div>
+            <div className="text-[10.5px] font-bold uppercase tracking-wider faint">Evidence assessment</div>
+            <div className="mt-1">
+              <span className={`chip ${i.verification === "verified" ? "chip-low" : i.verification === "needs_review" ? "chip-warn" : "chip-critical"}`}>
+                {i.verification === "verified" ? "Consistent" : i.verification === "needs_review" ? "Unclear" : "Conflicting"}
+              </span>
+            </div>
           </div>
           <div className="min-w-0">
             <div className="text-[10.5px] font-bold uppercase tracking-wider faint">Reported</div>
@@ -537,7 +559,7 @@ export default function IncidentPage() {
           </h2>
           <p className="mt-1 text-[12px] muted">
             Observations from people nearby. Comments are community contributions —{" "}
-            <strong>not</strong> verified facts like the AI VERIFIED assessment above.
+            <strong>not</strong> checked facts like the AI CHECK PASSED assessment above.
           </p>
 
           {authLoading ? (

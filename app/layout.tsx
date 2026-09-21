@@ -17,7 +17,7 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: "HillSense AI — Community hazard intelligence for the Himalayas",
   description:
-    "Know the hazard before you reach it. Community-powered, AI-verified mountain hazard alerts for Himachal Pradesh: report by text, photo or voice; see verified hazards near you.",
+    "Know the hazard before you reach it. Community-powered, AI-checked mountain hazard alerts for Himachal Pradesh: report by text, photo or voice; see safety-checked hazards near you.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

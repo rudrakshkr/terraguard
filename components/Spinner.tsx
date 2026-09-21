@@ -12,10 +12,10 @@ export function Spinner({ className = "h-4 w-4" }: { className?: string }) {
 }
 
 const STEPS = [
-  "Retrieving knowledge-base passages",
-  "Classifying incident (multimodal)",
-  "Grounding recommendations in sources",
-  "Assembling structured result",
+  "Reading your report",
+  "Checking the evidence for consistency",
+  "Attaching relevant safety guidance",
+  "Preparing the assessment",
 ];
 
 export function AnalysisProgress({ active }: { active: boolean }) {

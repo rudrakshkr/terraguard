@@ -6,6 +6,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { haversineKm, fmtDistance, fmtAge, minutesSince } from "@/lib/geo";
 import { originMeta } from "@/lib/threat";
+import { exampleReportLabel } from "@/lib/labels";
 import type { Incident } from "@/lib/types";
 
 const HIMACHAL_CENTER: [number, number] = [31.9, 77.1];
@@ -124,7 +125,10 @@ export default function IncidentMap({
                   <div style={{ fontSize: 12, lineHeight: 1.45, marginBottom: 6 }}>{i.summary}</div>
                   <div style={{ fontSize: 11, opacity: 0.75, marginBottom: 6 }}>
                     {km != null ? `${fmtDistance(km)} · ` : ""}
-                    reported {fmtAge(minutesSince(i.created_at))} · {i.status}
+                    {i.origin === "seed"
+                      ? exampleReportLabel(i.created_at)
+                      : `reported ${fmtAge(minutesSince(i.created_at))}`}{' · '}
+                    {i.status === "Responding" ? "Active" : i.status}
                   </div>
                   <a href={`/incident/${i.id}`} style={{ fontSize: 12, color: "#0e7490", fontWeight: 600 }}>
                     View details →

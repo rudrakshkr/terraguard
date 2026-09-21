@@ -277,7 +277,7 @@ export function verifyReport(input: {
       evidence_checks: checks,
       corroboration: corroborationInfo,
       publication: "hidden",
-      headline: "REJECTED",
+      headline: "NOT PUBLISHED",
       explanation:
         "The submitted evidence does not consistently support the reported hazard. The report has not been published. If this is a real emergency, call 112.",
     };
@@ -308,7 +308,7 @@ export function verifyReport(input: {
     evidence_checks: checks,
     corroboration: corroborationInfo,
     publication: "public",
-    headline: "VERIFIED",
+    headline: "AI CHECK PASSED",
     explanation:
       "Evidence appears consistent with the reported hazard. Published as a public alert for nearby users.",
     ...(warns.length > 2

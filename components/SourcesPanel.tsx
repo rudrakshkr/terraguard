@@ -10,7 +10,7 @@ export default function SourcesPanel({
 }) {
   if (sources.length === 0) {
     return (
-      <div className="card p-4 text-sm muted">No knowledge-base passages matched this report.</div>
+      <div className="card p-4 text-sm muted">No safety guidance passages matched this report.</div>
     );
   }
   return (
@@ -18,15 +18,15 @@ export default function SourcesPanel({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <BookOpenCheck className="h-4 w-4" style={{ color: "var(--low)" }} />
-          <h3 className="text-[13.5px] font-semibold">Sources used</h3>
+          <h3 className="text-[13.5px] font-semibold">Safety guidance used</h3>
         </div>
         {grounded ? (
           <span className="chip chip-low">
             <span className="dot" />
-            AI grounded in provided sources
+            Answers drawn from these sources
           </span>
         ) : (
-          <span className="chip chip-info">RAG retrieval</span>
+          <span className="chip chip-info">Safety knowledge base</span>
         )}
       </div>
       <ul className="space-y-2.5">
@@ -42,9 +42,7 @@ export default function SourcesPanel({
                   <span className="text-[13px] font-semibold">{s.title}</span>
                   {s.organization && <span className="chip chip-neutral">{s.organization}</span>}
                 </div>
-                <div className="mono mt-0.5 text-[10px] faint">
-                  knowledge-base/{s.doc}.md · similarity {s.score.toFixed(2)}
-                </div>
+                <div className="mono mt-0.5 text-[10px] faint">{s.doc}</div>
                 {s.material && (
                   <div className="mt-1 text-[10.5px] italic muted">{s.material}</div>
                 )}

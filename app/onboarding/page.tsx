@@ -10,7 +10,6 @@ import { useAuth, authFetch } from "@/hooks/useAuth";
 import {
   useLocationPreference,
   PRESETS,
-  coordsLabel,
   type ResolvedAddress,
 } from "@/hooks/useLocationPreference";
 import { Spinner } from "@/components/Spinner";
@@ -192,8 +191,8 @@ export default function OnboardingPage() {
                   )}
                   <p className="mt-1 text-[11px] faint">
                     {loc.approximate
-                      ? `Approximate: ${coordsLabel(loc.lat, loc.lng, loc.accuracy)}`
-                      : "Resolved from your device GPS via OpenStreetMap"}
+                      ? "Approximate location — edit the address below if it is not accurate."
+                      : "Location detected from your device. Please verify before submitting."}
                   </p>
                 </div>
               )}

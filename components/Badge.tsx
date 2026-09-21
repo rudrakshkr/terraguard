@@ -1,5 +1,5 @@
 import type { Severity } from "@/lib/types";
-import { confidenceBand } from "@/lib/threat";
+import { fmtDateTime, activityLabel } from "@/lib/labels";
 
 export function SeverityChip({ severity }: { severity: Severity }) {
   return (
@@ -10,27 +10,37 @@ export function SeverityChip({ severity }: { severity: Severity }) {
   );
 }
 
+/**
+ * Operational status. "Active" means the hazard is being observed by the
+ * community — it deliberately does not claim that responders are deployed.
+ */
 export function StatusChip({ status }: { status: string }) {
   const map: Record<string, string> = {
     Open: "chip-critical",
+    Active: "chip-critical",
     Responding: "chip-warn",
     Resolved: "chip-low",
   };
-  const label = status === "Open" ? "ACTIVE" : status === "Responding" ? "RESPONDING" : "RESOLVED";
+  const label =
+    status === "Resolved" ? "RESOLVED" : status === "Responding" ? "ACTIVE" : "ACTIVE";
   return (
-    <span className={`chip ${map[status] ?? "chip-neutral"}`}>
+    <span className={`chip ${map[status] ?? "chip-critical"}`}>
       <span className="dot" />
       {label}
     </span>
   );
 }
 
+/**
+ * Evidence check outcome shown on reports that passed the automated checks.
+ * The accompanying line is rendered next to this chip on each page.
+ */
 export function VerificationChip({ verification }: { verification?: string }) {
   if (verification === "verified")
     return (
       <span className="chip chip-low">
         <span className="dot" />
-        AI VERIFIED
+        AI CHECK PASSED
       </span>
     );
   if (verification === "needs_review")
@@ -50,6 +60,16 @@ export function VerificationChip({ verification }: { verification?: string }) {
   return null;
 }
 
+/** One-line, plain-words explanation of what the AI check did and did not do. */
+export function VerificationNote() {
+  return (
+    <p className="text-[11.5px] muted leading-relaxed">
+      AI checks whether the available report evidence is consistent. It does not determine whether
+      a person is truthful.
+    </p>
+  );
+}
+
 /** Provenance chips for the demo dataset vs new community reports. */
 export function OriginChip({ origin }: { origin: string }) {
   if (origin === "seed")
@@ -67,71 +87,84 @@ export function OriginChip({ origin }: { origin: string }) {
   return null;
 }
 
-/** Assessment-confidence band, explicitly not a calibrated probability. */
-export function ConfidenceChip({
-  score,
-  heuristic,
-  needsVerification,
-  compact,
-}: {
-  score: number;
-  heuristic?: boolean;
-  needsVerification?: boolean;
-  /** For fixed-width grid cells where the "Assessment confidence:" prefix is
-   *  already provided by the section heading — renders just "Medium (heuristic)". */
-  compact?: boolean;
-}) {
-  const band = confidenceBand(score);
-  const cls = band === "High" ? "chip-low" : band === "Medium" ? "chip-info" : "chip-warn";
+/**
+ * Evidence assessment. Shown as a consistent statement (e.g. "Consistent")
+ * — never as an uncalibrated confidence score.
+ */
+export function EvidenceChip({ assessment }: { assessment: string }) {
+  const cls =
+    assessment === "Consistent" ? "chip-low" : assessment === "Unclear" ? "chip-warn" : "chip-critical";
   return (
-    <span
-      className={`chip ${cls} !whitespace-normal`}
-      title={`Raw model score ${Math.round(score * 100)}/100, interpreted as ${band}. Not a calibrated probability.`}
-    >
-      {!compact && <>Assessment confidence: </>}
-      {band}
-      {heuristic ? " (heuristic)" : ""}
-      {needsVerification ? " · needs verification" : ""}
-    </span>
-  );
-}export function FreshnessChip({
-  fresh,
-  minsSinceConfirmed,
-}: {
-  fresh: "fresh" | "recent" | "stale";
-  minsSinceConfirmed: number;
-}) {
-  if (fresh === "fresh")
-    return (
-      <span className="chip chip-low">
-        <span className="dot" />
-        Last confirmed {minsSinceConfirmed < 1 ? "just now" : `${minsSinceConfirmed} min ago`}
-      </span>
-    );
-  if (fresh === "recent")
-    return (
-      <span className="chip chip-warn">
-        <span className="dot" />
-        Awaiting reconfirmation
-      </span>
-    );
-  return (
-    <span className="chip chip-critical">
-      <span className="dot" />
-      Needs reconfirmation
+    <span className={`chip ${cls} !whitespace-normal`}>
+      Evidence assessment: {assessment}
     </span>
   );
 }
 
-/** Which engine produced the current output — honest about heuristic mode. */
+/**
+ * Freshness of a live incident. Shows "Last updated" unless community
+ * confirmations exist, in which case the confirmation count is shown.
+ */
+export function FreshnessChip({
+  fresh,
+  minsSinceConfirmed,
+  confirmations = 0,
+}: {
+  fresh: "fresh" | "recent" | "stale";
+  minsSinceConfirmed: number;
+  confirmations?: number;
+}) {
+  if (confirmations > 0)
+    return (
+      <span className="chip chip-info">
+        <span className="dot" />
+        Community confirmation · {confirmations} {confirmations === 1 ? "person" : "people"}
+      </span>
+    );
+  if (fresh === "fresh")
+    return (
+      <span className="chip chip-low">
+        <span className="dot" />
+        Last updated {minsSinceConfirmed < 1 ? "just now" : `${minsSinceConfirmed} min ago`}
+      </span>
+    );
+}
+
+/**
+ * Community activity line. Shows "Last updated" for reports with no community
+ * confirmations, and mentions the confirmation count only when someone has
+ * actually confirmed the incident.
+ */
+export function ActivityChip({
+  confirmations,
+  lastUpdate,
+  isExample = false,
+}: {
+  confirmations: number;
+  lastUpdate?: string | null;
+  isExample?: boolean;
+}) {
+  const cls = confirmations > 0 ? "chip-info" : "chip-neutral";
+  return (
+    <span className={`chip ${cls}`} title={`Last update: ${fmtDateTime(lastUpdate) || "—"}`}>
+      <span className="dot" />
+      {activityLabel(confirmations, lastUpdate, isExample)}
+    </span>
+  );
+}
+
+/**
+ * Which AI services are available right now — phrased for non-technical
+ * readers, without naming engines, models or infrastructure.
+ */
 export function ModeBadge({ aiAvailable }: { aiAvailable: boolean }) {
   return aiAvailable ? (
-    <span className="chip chip-info" title="Live LLM (Gemini-compatible API) generated this assessment">
-      LLM connected
+    <span className="chip chip-info" title="Automated report checks and safety guidance are available">
+      AI services available
     </span>
   ) : (
-    <span className="chip chip-neutral" title="Running without an API key — deterministic rule-based fallback">
-      Heuristic mode (no AI)
+    <span className="chip chip-neutral" title="Automated checks are running in reduced mode">
+      AI services limited
     </span>
   );
 }

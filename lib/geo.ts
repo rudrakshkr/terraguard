@@ -105,7 +105,7 @@ function corridorLabel(locations: string[]): string {
 }
 
 /**
- * AI-detected incident clusters: ≥3 active incidents of related hazard types
+ * Related incident clusters: ≥3 active incidents of related hazard types
  * within 25 km and a 12-hour window. Descriptive, not predictive.
  */
 export function detectClusters(incidents: Incident[]): HazardCluster[] {
