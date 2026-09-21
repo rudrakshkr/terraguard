@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 interface ProfileBody {
   display_name?: string;
   email?: string;
+  avatar_url?: string | null; // public URL from the upload endpoint; null removes
   location?: {
     full_address?: string;
     locality?: string;
@@ -57,9 +58,22 @@ export async function POST(req: NextRequest) {
       };
     }
 
+    // avatar_url must be either null (remove photo) or one of our own upload URLs.
+    let avatarUrl: string | null | undefined;
+    if (body.avatar_url === null) {
+      avatarUrl = null;
+    } else if (typeof body.avatar_url === "string") {
+      const v = body.avatar_url.trim().slice(0, 500);
+      if (v && !v.startsWith("/api/uploads/")) {
+        return NextResponse.json({ error: "Invalid photo reference." }, { status: 400 });
+      }
+      avatarUrl = v || undefined;
+    }
+
     const updated = await updateUser(user.id, {
       display_name: name,
       ...(email ? { email } : {}),
+      ...(avatarUrl !== undefined ? { avatar_url: avatarUrl ?? undefined } : {}),
       location,
       onboarded: true,
     });

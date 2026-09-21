@@ -8,12 +8,17 @@ import {
   listComments,
   addComment,
   deleteComment,
+  withAuthorProfiles,
 } from "@/lib/community-store";
 import { userFromRequest, getUserById } from "@/lib/auth";
 
 export const runtime = "nodejs";
 // Never cache: incidents and community data must be live across all clients.
 export const dynamic = "force-dynamic";
+
+/** Per-request caches for author profile lookups (public fields only). */
+const userIdNameCache = new Map<string, string>();
+const avatarCache = new Map<string, string | null>();
 
 export async function GET(
   _req: NextRequest,
@@ -27,13 +32,33 @@ export async function GET(
     }
 
     // Comments are public observations, shown to everyone on the detail page.
-    // Phone numbers/private info never enter comment records, so this is safe.
-    const comments = await listComments(id);
+    // Phone numbers/private info never enter comment records, and authors are
+    // resolved from live profiles (name + avatar) — never from raw user rows.
+    const rawComments = await listComments(id);
+    const comments = withAuthorProfiles(rawComments, (uid) => {
+      const u = userIdNameCache.get(uid);
+      if (u === undefined) return null; // unknown/removed user
+      return { display_name: u, avatar_url: avatarCache.get(uid) ?? null };
+    });
 
     // If the caller is authenticated, tell them whether they already responded
     // so the UI can show the completed state after a refresh.
     const user = await userFromRequest(_req);
     const mine = user ? await hasConfirmed(id, user.id) : null;
+
+    // Resolve author profiles for this incident's comments (public fields only).
+    const authorIds = [...new Set(rawComments.map((c) => c.user_id))];
+    for (const uid of authorIds) {
+      if (userIdNameCache.has(uid) && avatarCache.has(uid)) continue;
+      const u = await getUserById(uid);
+      if (u) {
+        userIdNameCache.set(uid, u.display_name || "HillSense user");
+        avatarCache.set(uid, u.avatar_url ?? null);
+      } else {
+        userIdNameCache.set(uid, "");
+        avatarCache.set(uid, null);
+      }
+    }
 
     // The latest ACTUAL community response time, from the per-user records
     // (not the reporter's own timestamp). Null when nobody has responded yet.

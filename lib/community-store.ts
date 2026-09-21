@@ -26,8 +26,8 @@ export interface ConfirmationRecord {
 export interface CommentRecord {
   id: string;
   incident_id: string;
-  user_id: string;
-  author_name: string; // display name / first name only — never phone
+  user_id: string; // links the comment to its author (resolution happens at read time)
+  author_name: string; // snapshot at post time; the API re-resolves from the live profile
   body: string;
   created_at: string;
 }
@@ -250,6 +250,33 @@ export async function deleteComment(commentId: string, userId: string): Promise<
     const comments = [...d.comments];
     comments.splice(idx, 1);
     return { doc: { ...d, comments }, result: true };
+  });
+}
+
+/**
+ * Attach live profile info (display name, avatar) to a batch of comments.
+ * The profile is the source of truth — the stored author_name is only a
+ * historical snapshot, so a rename updates everywhere a comment shows.
+ * Only public fields are attached; phone/email never enter comment records.
+ */
+export function withAuthorProfiles<T extends CommentRecord>(
+  comments: T[],
+  resolve: (userId: string) => { display_name: string; avatar_url?: string | null } | null,
+): (T & { author_display_name: string; author_initials: string; author_avatar_url?: string | null })[] {
+  return comments.map((c) => {
+    const profile = resolve(c.user_id);
+    const name = profile?.display_name || c.author_name || "HillSense user";
+    return {
+      ...c,
+      author_display_name: name,
+      author_initials: name
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((p) => p[0]!.toUpperCase())
+        .join("") || "H",
+      ...(profile?.avatar_url ? { author_avatar_url: profile.avatar_url } : {}),
+    };
   });
 }
 

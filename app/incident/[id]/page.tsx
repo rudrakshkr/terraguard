@@ -29,6 +29,9 @@ interface CommentItem {
   id: string;
   user_id: string;
   author_name: string;
+  author_display_name?: string;
+  author_initials?: string;
+  author_avatar_url?: string | null;
   body: string;
   created_at: string;
 }
@@ -600,10 +603,20 @@ export default function IncidentPage() {
               comments.map((c) => (
                 <li key={c.id} className="rounded-lg border p-3.5" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full text-[10.5px] font-bold" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
-                      {c.author_name.split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase()}
-                    </span>
-                    <span className="text-[13px] font-semibold">{c.author_name.split(/\s+/)[0]}</span>
+                    {c.author_avatar_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={c.author_avatar_url}
+                        alt=""
+                        className="h-6 w-6 shrink-0 rounded-full object-cover"
+                        style={{ border: "1px solid var(--border)" }}
+                      />
+                    ) : (
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10.5px] font-bold" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
+                        {c.author_initials ?? c.author_name.split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase()}
+                      </span>
+                    )}
+                    <span className="text-[13px] font-semibold">{c.author_display_name ?? c.author_name}</span>
                     <span className="text-[11px] faint">{fmtAge(minutesSince(c.created_at))}</span>
                     {user && c.user_id === user.id && (
                       <button

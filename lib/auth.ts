@@ -53,6 +53,7 @@ export interface UserRecord {
   phone: string; // digits only, never exposed via API
   display_name: string;
   email?: string;
+  avatar_url?: string; // public URL of the profile photo (blob storage)
   onboarded: boolean;
   created_at: string;
   location?: {
@@ -317,7 +318,7 @@ export async function userFromRequest(req: Request): Promise<UserRecord | null> 
 /** Persist profile edits (onboarding: name/email/location). Phone is immutable. */
 export async function updateUser(
   userId: string,
-  patch: Partial<Pick<UserRecord, "display_name" | "email" | "onboarded" | "location">>,
+  patch: Partial<Pick<UserRecord, "display_name" | "email" | "avatar_url" | "onboarded" | "location">>,
 ): Promise<UserRecord | null> {
   return mutate<UserRecord | null>((cur) => {
     const user = cur.users[userId];
@@ -343,9 +344,16 @@ export function publicUser(u: UserRecord) {
       .slice(0, 2)
       .map((p) => p[0]!.toUpperCase())
       .join(""),
+    ...(u.avatar_url ? { avatar_url: u.avatar_url } : {}),
     onboarded: u.onboarded,
     has_location: Boolean(u.location),
   };
+}
+
+/** Public avatar for comment attribution — empty name means "no profile". */
+export function publicAvatar(u: UserRecord | null): { display_name: string; avatar_url?: string | null } | null {
+  if (!u) return null;
+  return { display_name: u.display_name || "HillSense user", avatar_url: u.avatar_url ?? null };
 }
 
 /** Delete a session (logout). */
