@@ -58,13 +58,17 @@ export async function POST(req: NextRequest) {
       };
     }
 
-    // avatar_url must be either null (remove photo) or one of our own upload URLs.
+    // avatar_url must be either null (remove photo) or one of our own upload URLs
+    // (our serving route in file mode, or the configured blob CDN in blob mode).
     let avatarUrl: string | null | undefined;
     if (body.avatar_url === null) {
       avatarUrl = null;
     } else if (typeof body.avatar_url === "string") {
       const v = body.avatar_url.trim().slice(0, 500);
-      if (v && !v.startsWith("/api/uploads/")) {
+      const isOwnUrl =
+        v.startsWith("/api/uploads/") ||
+        (v.startsWith("https://") && (v.includes("blob.vercel-storage.com") || v.includes("/hillsense/avatars/")));
+      if (v && !isOwnUrl) {
         return NextResponse.json({ error: "Invalid photo reference." }, { status: 400 });
       }
       avatarUrl = v || undefined;

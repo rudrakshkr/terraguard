@@ -67,7 +67,7 @@ async function send(item: OutboxItem): Promise<{ res: Response; data: Record<str
       break;
     case "comment":
       url = `/api/incidents/${item.incident_id}`;
-      body = { action: "comment", ...(item.payload as { body: string }) };
+      body = { action: "comment", client_id: item.id, ...(item.payload as { body: string }) };
       break;
     case "report": {
       // Reports are delivered to the offline-ingest endpoint, which runs the

@@ -189,10 +189,29 @@ export default function IncidentPage() {
         setMyConfirmation(data.my_confirmation ?? null);
         loadedOnceRef.current = true;
         setError(null);
+        // Persist to IndexedDB so the incident stays readable offline.
+        try {
+          const { putCachedDetail } = await import("@/lib/offline-db");
+          await putCachedDetail(id, data.incident, data.comments ?? []);
+        } catch { /* storage unavailable */ }
       })
       .catch((e: unknown) => {
         if (incident || loadedOnceRef.current) return; // had data — never flash the error
-        setError("Could not load this incident. Check the link and try again.");
+        // Offline / server unreachable: fall back to the last stored copy.
+        void (async () => {
+          try {
+            const { getCachedDetail } = await import("@/lib/offline-db");
+            const cached = await getCachedDetail(id);
+            if (cached) {
+              setIncident(cached.incident as Incident);
+              setComments((cached.comments ?? []) as CommentItem[]);
+              loadedOnceRef.current = true;
+              setNotice("Showing the saved copy from your last visit (offline).");
+              return;
+            }
+          } catch { /* storage unavailable */ }
+          setError("Could not load this incident. Check the link and try again.");
+        })();
         void e;
       });
   };
@@ -323,6 +342,18 @@ export default function IncidentPage() {
   }
 
   async function removeComment(commentId: string) {
+    // A still-pending offline comment was never posted — just drop it locally.
+    const pendingLocal = comments.find((x) => x.id === commentId && x.local_state === "pending");
+    if (pendingLocal) {
+      try {
+        const { deleteOutboxItem } = await import("@/lib/offline-db");
+        await deleteOutboxItem(commentId);
+      } catch {
+        /* outbox unavailable — nothing to clean */
+      }
+      setComments((c) => c.filter((x) => x.id !== commentId));
+      return;
+    }
     setDeletingCommentId(commentId);
     try {
       const res = await authFetch(`/api/incidents/${id}?comment_id=${commentId}`, { method: "DELETE" });

@@ -5,7 +5,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import {
   MapPin, LocateFixed, ShieldCheck, Clock, Radio,
-  List, Map as MapIcon, Phone, LogIn, Search, Siren,
+  List, Map as MapIcon, Phone, LogIn, Search, Siren, WifiOff,
 } from "lucide-react";
 import type { Incident } from "@/lib/types";
 import { useLocationPreference, PRESETS } from "@/hooks/useLocationPreference";
@@ -87,13 +87,34 @@ export default function NearbyPage() {
   const [view, setView] = useState<"list" | "map">("list");
   const [radius, setRadius] = useState(25);
   const [customPlace, setCustomPlace] = useState("");
+  const [cachedAt, setCachedAt] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => {
       fetch("/api/incidents?public=1", { cache: "no-store" })
-        .then((r) => r.json())
-        .then((d) => setIncidents(d.incidents ?? []))
-        .catch(() => setIncidents([]));
+        .then((r) => {
+          if (!r.ok) throw new Error("bad status");
+          return r.json();
+        })
+        .then(async (d) => {
+          setIncidents(d.incidents ?? []);
+          // Persist for offline browsing.
+          try {
+            const { putCachedList } = await import("@/lib/offline-db");
+            await putCachedList(d.incidents ?? []);
+          } catch { /* storage unavailable */ }
+        })
+        .catch(async () => {
+          // Offline: show the last stored list, clearly labelled as cached.
+          try {
+            const { getCachedList } = await import("@/lib/offline-db");
+            const cached = await getCachedList();
+            setIncidents((cached?.incidents as Incident[]) ?? []);
+            if (cached) setCachedAt(cached.fetched_at);
+          } catch {
+            setIncidents([]);
+          }
+        });
     }, 0);
     return () => clearTimeout(t);
   }, []);
@@ -146,6 +167,12 @@ export default function NearbyPage() {
             <MapPin className="h-4 w-4 shrink-0" style={{ color: "var(--accent)" }} aria-hidden />
             <span className="min-w-0">{statusLine}</span>
           </p>
+          {cachedAt && (
+            <p className="mt-1 flex items-center gap-1.5 text-[12px]" style={{ color: "var(--warn)" }} role="status">
+              <WifiOff className="h-3.5 w-3.5" aria-hidden />
+              Showing saved reports from your last visit ({new Date(cachedAt).toLocaleString()}) — not live information.
+            </p>
+          )}
         </div>
         <div className="flex flex-col gap-2 xs:flex-row xs:items-center sm:flex-row sm:items-center sm:shrink-0">
           <div className="segmented" role="tablist" aria-label="View mode">

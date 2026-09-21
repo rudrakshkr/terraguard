@@ -30,6 +30,7 @@ export interface CommentRecord {
   author_name: string; // snapshot at post time; the API re-resolves from the live profile
   body: string;
   created_at: string;
+  client_id?: string; // outbox idempotency key — replay protection for synced offline comments
 }
 
 interface CommunityDb {
@@ -200,12 +201,20 @@ export async function addComment(
   userId: string,
   authorName: string,
   body: string,
+  /** Client-generated idempotency key from the offline outbox (optional). */
+  clientId?: string,
 ): Promise<{ ok: true; comment: CommentRecord } | { ok: false; error: string }> {
   const clean = body.trim().replace(/\s+/g, " ").slice(0, 600);
   if (!clean) return { ok: false, error: "Comment cannot be empty." };
 
   return mutate<{ ok: boolean; comment?: CommentRecord; error?: string }>((d) => {
     const now = Date.now();
+    // Idempotent replay: a synced offline comment retried with the same
+    // client-generated key returns the original record, never a duplicate.
+    if (clientId) {
+      const replay = d.comments.find((c) => c.client_id === clientId);
+      if (replay) return { doc: d, result: { ok: true, comment: replay } };
+    }
     const dup = d.comments.find(
       (c) =>
         c.incident_id === incidentId &&
@@ -233,6 +242,7 @@ export async function addComment(
       author_name: authorName,
       body: clean,
       created_at: new Date().toISOString(),
+      ...(clientId ? { client_id: clientId } : {}),
     };
     return {
       doc: { ...d, comments: [...d.comments, comment] },

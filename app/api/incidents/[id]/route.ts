@@ -106,6 +106,7 @@ export async function POST(
       response?: string;
       confirmed?: boolean; // legacy shape
       body?: string;
+      client_id?: string; // offline-outbox idempotency key
     };
 
     /* ------------------------------ confirmations ----------------------------- */
@@ -154,7 +155,13 @@ export async function POST(
 
     /* -------------------------------- comments ------------------------------- */
     if (body.action === "comment") {
-      const result = await addComment(id, user.id, user.display_name || "HillSense user", body.body ?? "");
+      const result = await addComment(
+        id,
+        user.id,
+        user.display_name || "HillSense user",
+        body.body ?? "",
+        typeof body.client_id === "string" && body.client_id.trim() ? body.client_id.trim().slice(0, 80) : undefined,
+      );
       if (!result.ok) {
         return NextResponse.json({ error: result.error }, { status: 400 });
       }

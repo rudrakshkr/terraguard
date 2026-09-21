@@ -29,7 +29,7 @@ export default function DashboardPage() {
   const [clusters, setClusters] = useState<ReturnType<typeof detectClusters>>([]);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [rag, setRag] = useState<{ docs: number; chunks: number; embedder: string; aiAvailable: boolean } | null>(null);
+  const [rag, setRag] = useState<{ docs: number; aiAvailable: boolean } | null>(null);
 
   const [severity, setSeverity] = useState("");
   const [type, setType] = useState("");

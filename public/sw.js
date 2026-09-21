@@ -53,8 +53,11 @@ async function shellStrategy(request) {
   const cached = await cache.match(request, { ignoreSearch: request.mode === "navigate" });
   const network = fetch(request)
     .then((res) => {
-      if (res && res.ok && (request.origin === undefined || true)) {
-        cache.put(request.mode === "navigate" ? new Request(new URL(request).pathname) : request, res.clone());
+      if (res && res.ok) {
+        // Best-effort revalidation write — must never break the response.
+        try {
+          cache.put(request.mode === "navigate" ? new Request(new URL(request.url).pathname) : request, res.clone());
+        } catch { /* storage full / private mode */ }
       }
       return res;
     })
@@ -85,13 +88,18 @@ async function dataStrategy(request) {
     const res = await fetch(request);
     if (res && res.ok) {
       // Key by pathname (drop auth headers' variance) so offline reads work
-      // regardless of whether the original request was authenticated.
-      const key = new Request(new URL(request).pathname, { method: "GET" });
-      cache.put(key, res.clone());
+      // regardless of whether the original request was authenticated. The
+      // put is best-effort: a storage failure must never fail the request.
+      try {
+        const key = new Request(new URL(request.url).pathname, { method: "GET" });
+        await cache.put(key, res.clone());
+      } catch (putErr) {
+        console.warn("[sw] cache.put failed (continuing)", putErr);
+      }
     }
     return res;
   } catch {
-    const key = new Request(new URL(request).pathname, { method: "GET" });
+    const key = new Request(new URL(request.url).pathname, { method: "GET" });
     const cached = await cache.match(key);
     if (cached) {
       const headers = new Headers(cached.headers);
@@ -116,7 +124,9 @@ async function guidanceStrategy(request) {
   if (cached) return cached;
   try {
     const res = await fetch(request);
-    if (res && res.ok) cache.put(request, res.clone());
+    if (res && res.ok) {
+      try { await cache.put(request, res.clone()); } catch { /* best-effort */ }
+    }
     return res;
   } catch {
     return new Response(JSON.stringify({ error: "offline-unavailable" }), {
@@ -128,6 +138,10 @@ async function guidanceStrategy(request) {
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
+  // Requests from the app's own fetch client (authFetch) may carry an
+  // Authorization header; Cache Storage refuses to store such requests.
+  // dataStrategy keys by bare pathname, so this is safe — but we must not
+  // abort the whole fetch when the PUT fails.
   if (req.method !== "GET") return; // writes go through the app's outbox
 
   const url = new URL(req.url);
