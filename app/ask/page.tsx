@@ -1,15 +1,17 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { SendHorizontal, RotateCcw, BookOpenCheck, AlertTriangle, Phone } from "lucide-react";
+import { SendHorizontal, RotateCcw, BookOpenCheck, AlertTriangle, Phone, WifiOff } from "lucide-react";
 import type { RagAnswer, RagSource } from "@/lib/types";
 import SourcesPanel from "@/components/SourcesPanel";
 import { Spinner } from "@/components/Spinner";
+import { matchOfflineTopic, offlineFallbackAnswer, formatOfflineAnswer, type OfflineGuidanceTopic } from "@/lib/offline-guidance";
 
 interface Turn {
   q: string;
   a: RagAnswer | null;
   error?: string;
+  offline?: boolean;
 }
 
 const SUGGESTIONS = [
@@ -18,6 +20,25 @@ const SUGGESTIONS = [
   "What should tourists do during a flash flood?",
   "What should we do if rocks start falling near a road?",
 ];
+
+/** Build the cached-guidance answer for offline use. Clearly labelled, never faked. */
+function cachedAnswerFor(query: string): RagAnswer {
+  const topic: OfflineGuidanceTopic = matchOfflineTopic(query) ?? offlineFallbackAnswer();
+  return {
+    answer: formatOfflineAnswer(topic),
+    sources: [
+      {
+        id: `offline-${topic.id}`,
+        title: `${topic.title} — cached safety guidance`,
+        doc: "Stored on this device",
+        excerpt: "Available offline. Sample reference material — not an official government publication.",
+        score: 0,
+        material: "Cached safety guidance",
+      },
+    ],
+    aiAvailable: false,
+  };
+}
 
 export default function AskPage() {
   const [question, setQuestion] = useState("");
@@ -30,10 +51,22 @@ export default function AskPage() {
   const ask = async (q: string) => {
     const query = q.trim();
     if (!query || busy) return;
+    const offline = typeof navigator !== "undefined" && !navigator.onLine;
     setBusy(true);
     setQuestion("");
     setTurns((t) => [...t, { q: query, a: null }]);
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
+    if (offline) {
+      // No connectivity: serve the cached guidance library. Clearly labelled —
+      // never pretend the live AI answered.
+      const answer = cachedAnswerFor(query);
+      setTurns((t) => [...t.slice(0, -1), { q: query, a: answer, offline: true }]);
+      setLastSources(answer.sources);
+      setLastGrounded(false);
+      setBusy(false);
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
+      return;
+    }
     try {
       const res = await fetch("/api/ask", {
         method: "POST",
@@ -50,7 +83,11 @@ export default function AskPage() {
         setLastGrounded(answer.aiAvailable);
       }
     } catch {
-      setTurns((t) => [...t.slice(0, -1), { q: query, a: null, error: "Could not reach the Ask service. Check your connection." }]);
+      // Request failed (connection dropped mid-flight): fall back to cached guidance too.
+      const answer = cachedAnswerFor(query);
+      setTurns((t) => [...t.slice(0, -1), { q: query, a: answer, offline: true }]);
+      setLastSources(answer.sources);
+      setLastGrounded(false);
     } finally {
       setBusy(false);
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
@@ -63,7 +100,7 @@ export default function AskPage() {
         <h1 className="text-[22px] font-bold tracking-tight sm:text-2xl">Ask HillSense</h1>
         <p className="mt-1.5 text-[14px] leading-relaxed muted">
           Ask about landslides, floods, evacuation and mountain safety. Every answer shows the
-          safety guidance it used.
+          safety guidance it used. Essential guidance also works offline.
         </p>
       </div>
 
@@ -99,11 +136,16 @@ export default function AskPage() {
               </div>
             ) : t.a ? (
               <div className="card fade-up p-4">
-                <div className="mb-2 flex items-center gap-2">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
                   <BookOpenCheck className="h-4 w-4" style={{ color: "var(--low)" }} />
                   <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--low)" }}>
-                    {t.a.aiAvailable ? "Safety guidance used" : "Safety knowledge base"}
+                    {t.a.aiAvailable ? "Safety guidance used" : "Cached safety guidance"}
                   </span>
+                  {t.offline && (
+                    <span className="chip chip-neutral" title="Answered from guidance stored on this device — no internet needed">
+                      <WifiOff className="h-3 w-3" /> Offline
+                    </span>
+                  )}
                 </div>
                 <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed">{t.a.answer}</p>
               </div>
