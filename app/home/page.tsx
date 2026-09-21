@@ -98,7 +98,7 @@ export default function HomePage() {
             {profileLoc ? "Safety-checked community reports near your saved location." : "Safety-checked community reports across Himachal Pradesh — add a location on your profile for nearby alerts."}
           </p>
         </div>
-        <div className="btn-row sm:shrink-0">
+        <div className="flex flex-col gap-2.5 min-[420px]:flex min-[420px]:flex-row sm:shrink-0">
           <Link href="/" className="btn btn-secondary"><Navigation className="h-4 w-4" /> Public map</Link>
           <Link href="/report" className="btn btn-primary"><Siren className="h-4 w-4" /> Report Hazard</Link>
         </div>

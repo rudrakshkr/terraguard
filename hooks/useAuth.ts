@@ -132,8 +132,13 @@ export function useAuth() {
 }
 
 export function getAuthToken(): string | null {
+  // After a full page refresh the module-level cache is empty until the first
+  // hook mounts — read localStorage directly so early interactions (confirm,
+  // comment) never act as a signed-out user. Cached value wins afterwards.
   if (cachedToken) return cachedToken;
-  return readToken();
+  const fromStorage = readToken();
+  if (fromStorage) cachedToken = fromStorage;
+  return fromStorage;
 }
 
 /** Convenience helper for fetches that require auth. */
@@ -141,5 +146,11 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
   const token = getAuthToken();
   const headers = new Headers(init.headers ?? {});
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  return fetch(input, { ...init, headers });
+  const res = await fetch(input, { ...init, headers });
+  // Session was revoked server-side (expired, rotated, or the demo store was
+  // reset). Surface a clean auth state instead of leaving stale user data.
+  if (res.status === 401 && token) {
+    setSession(null, null);
+  }
+  return res;
 }

@@ -16,7 +16,7 @@ import { SeverityChip, StatusChip, VerificationChip, OriginChip, FreshnessChip }
 import { fmtDate, exampleReportLabel } from "@/lib/labels";
 import SourcesPanel from "@/components/SourcesPanel";
 import { Spinner } from "@/components/Spinner";
-import { useAuth, authFetch } from "@/hooks/useAuth";
+import { useAuth, authFetch, getAuthToken } from "@/hooks/useAuth";
 
 const IncidentMap = dynamic(() => import("@/components/IncidentMap"), {
   ssr: false,
@@ -254,14 +254,28 @@ export default function IncidentPage() {
       return;
     }
     try {
-      const res = await authFetch(`/api/incidents/${id}`, {
+      let res = await authFetch(`/api/incidents/${id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "confirm", response: stillPresent ? "yes" : "no" }),
       });
+      // First click straight after a page refresh can race the session
+      // hydration (module token cache not yet populated). Give it one chance
+      // to resolve, then retry — the user should never see a false
+      // "please sign in" while they are actually signed in.
+      if (res.status === 401 && !getAuthToken()) {
+        await new Promise((r) => setTimeout(r, 350));
+        if (getAuthToken()) {
+          res = await authFetch(`/api/incidents/${id}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "confirm", response: stillPresent ? "yes" : "no" }),
+          });
+        }
+      }
       const data = await res.json();
       if (res.status === 401) {
-        setActionError("Please sign in to confirm hazards.");
+        setActionError("Your session has expired. Please sign in again to confirm hazards.");
         return;
       }
       if (!res.ok) {
@@ -318,14 +332,26 @@ export default function IncidentPage() {
       return;
     }
     try {
-      const res = await authFetch(`/api/incidents/${id}`, {
+      let res = await authFetch(`/api/incidents/${id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "comment", body: text }),
       });
+      // Same session-hydration race as confirmations: retry once if the token
+      // only needed a moment to appear (fresh page load).
+      if (res.status === 401 && !getAuthToken()) {
+        await new Promise((r) => setTimeout(r, 350));
+        if (getAuthToken()) {
+          res = await authFetch(`/api/incidents/${id}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "comment", body: text }),
+          });
+        }
+      }
       const data = await res.json();
       if (res.status === 401) {
-        setActionError("Please sign in to comment.");
+        setActionError("Your session has expired. Please sign in again to comment.");
         return;
       }
       if (!res.ok) {
@@ -490,14 +516,14 @@ export default function IncidentPage() {
               </div>
             ) : authed ? (
               <>
-                <div className="btn-row mt-3">
-                  <button onClick={() => confirm(true)} disabled={confirming} className="btn btn-primary">
+                <div className="mt-3 grid grid-cols-1 gap-2.5 min-[420px]:grid-cols-2">
+                  <button onClick={() => confirm(true)} disabled={confirming} className="btn btn-primary w-full">
                     <ThumbsUp className="h-4 w-4" /> Yes, still present
                   </button>
-                  <button onClick={() => confirm(false)} disabled={confirming} className="btn btn-secondary">
+                  <button onClick={() => confirm(false)} disabled={confirming} className="btn btn-secondary w-full">
                     <ThumbsDown className="h-4 w-4" /> No, it has cleared
                   </button>
-                  {confirming && <Spinner className="my-auto h-4 w-4" />}
+                  {confirming && <Spinner className="mx-auto h-4 w-4" />}
                 </div>
                 <p className="mt-2 text-[11.5px] faint">You can respond once per incident — your answer updates how fresh this alert appears to others.</p>
               </>
@@ -678,16 +704,20 @@ export default function IncidentPage() {
           ) : authed ? (
             <form onSubmit={postComment} className="mt-4">
               <textarea
-                className="input min-h-[64px] resize-y"
+                className="input min-h-[72px] resize-y"
                 placeholder="Share what you saw — e.g. “The road is still blocked.” or “Traffic is being diverted.”"
                 value={commentText}
                 onChange={(e) => setCommentText(e.target.value)}
                 maxLength={600}
                 aria-label="Write a comment"
               />
-              <div className="mt-2 flex items-center justify-between">
-                <span className="text-[11px] faint">{commentText.length}/600 · posted as {user?.display_name}</span>
-                <button type="submit" disabled={postingComment || !commentText.trim()} className="btn btn-primary !py-1.5">
+              <div className="mt-2 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-[11px] faint sm:order-first">{commentText.length}/600 · posted as {user?.display_name}</span>
+                <button
+                  type="submit"
+                  disabled={postingComment || !commentText.trim()}
+                  className="btn btn-primary w-full justify-center sm:w-auto"
+                >
                   {postingComment ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SendHorizontal className="h-3.5 w-3.5" />}
                   Post update
                 </button>

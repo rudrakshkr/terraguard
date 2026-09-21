@@ -102,7 +102,6 @@ export default function ReportPage() {
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [savedOffline, setSavedOffline] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -208,7 +207,6 @@ export default function ReportPage() {
         state: "pending",
         attempts: 0,
       });
-      setSavedOffline(true);
       setDescription("");
       setImage(null);
       setObservations("");
@@ -569,15 +567,15 @@ export default function ReportPage() {
                 <span className="ml-auto flex items-center gap-1.5 text-[12px] muted"><Spinner className="h-3 w-3" /> Resolving address…</span>
               )}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={useMyLocation} disabled={locBusy} className="btn btn-secondary">
+            <div className="grid grid-cols-1 gap-2.5 min-[420px]:flex min-[420px]:flex-wrap min-[420px]:items-center min-[420px]:gap-2">
+              <button type="button" onClick={useMyLocation} disabled={locBusy} className="btn btn-secondary w-full min-[420px]:w-auto">
                 {locBusy ? <Spinner className="h-4 w-4" /> : <LocateFixed className="h-4 w-4" aria-hidden />}
                 Use my location
               </button>
-              <span className="text-[12px] faint">or</span>
-              <div className="relative">
+              <span className="hidden text-[12px] faint min-[420px]:inline">or</span>
+              <div className="relative min-[420px]:w-auto">
                 <select
-                  className="input !w-auto !py-2 pr-8"
+                  className="input !py-2 pr-8"
                   value={loc?.preset ?? ""}
                   onChange={(e) => e.target.value && pickPreset(e.target.value)}
                   aria-label="Choose a nearby town"
@@ -630,20 +628,20 @@ export default function ReportPage() {
               {locError && <p className="mt-2 text-[12px]" style={{ color: "var(--danger)" }}>{locError}</p>}
             </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="mt-3 flex flex-col gap-2.5 min-[420px]:flex-row min-[420px]:items-center min-[420px]:gap-2">
               <input
-                className="input !w-auto flex-1 !py-2"
+                className="input flex-1 !py-2"
                 placeholder="…or type a place (village, landmark, road)"
                 value={customPlace}
                 onChange={(e) => setCustomPlace(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && customPlace.trim()) { setCustom(customPlace); setCustomPlace(""); } }}
                 aria-label="Custom location name"
               />
-              <button type="button" className="btn btn-secondary" disabled={!customPlace.trim()} onClick={() => { setCustom(customPlace); setCustomPlace(""); }}>
+              <button type="button" className="btn btn-secondary shrink-0" disabled={!customPlace.trim()} onClick={() => { setCustom(customPlace); setCustomPlace(""); }}>
                 Set
               </button>
               {loc && locValid && !loc.address && (
-                <button type="button" className="btn btn-ghost" onClick={async () => {
+                <button type="button" className="btn btn-ghost shrink-0" onClick={async () => {
                   const addr = await reverseGeocode(loc.lat, loc.lng);
                   if (addr) setAddress(addr);
                 }}>
@@ -672,26 +670,28 @@ export default function ReportPage() {
             </div>
           )}
 
-          <div className="btn-row">
-            {isOffline ? (
-              <button type="button" onClick={saveOffline} disabled={saving} className="btn btn-primary">
-                {saving ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" aria-hidden />}
-                {saving ? "Saving…" : "Save report offline"}
-              </button>
-            ) : (
-              <>
-                <button type="button" onClick={analyze} disabled={!canAnalyze} className="btn btn-primary">
-                  {analyzing ? <Spinner className="h-4 w-4" /> : <Search className="h-4 w-4" aria-hidden />}
-                  {analyzing ? "Verifying report…" : "Submit report"}
+          <div className="sticky bottom-3 z-10">
+            <div className="flex flex-col gap-2.5 rounded-xl border p-3 shadow-lg sm:flex-row sm:items-center" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+              {isOffline ? (
+                <button type="button" onClick={saveOffline} disabled={saving} className="btn btn-primary w-full">
+                  {saving ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" aria-hidden />}
+                  {saving ? "Saving…" : "Save report offline"}
                 </button>
-                {result && result.verification.status !== "rejected" && (
-                  <button type="button" onClick={save} disabled={saving} className="btn btn-primary">
-                    {saving ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" aria-hidden />}
-                    {saving ? "Publishing…" : result.verification.status === "verified" ? "Publish to nearby users" : "Save for review"}
+              ) : (
+                <>
+                  <button type="button" onClick={analyze} disabled={!canAnalyze} className="btn btn-primary w-full sm:w-auto">
+                    {analyzing ? <Spinner className="h-4 w-4" /> : <Search className="h-4 w-4" aria-hidden />}
+                    {analyzing ? "Verifying report…" : "Submit report"}
                   </button>
-                )}
-              </>
-            )}
+                  {result && result.verification.status !== "rejected" && (
+                    <button type="button" onClick={save} disabled={saving} className="btn btn-primary w-full sm:w-auto">
+                      {saving ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" aria-hidden />}
+                      {saving ? "Publishing…" : result.verification.status === "verified" ? "Publish to nearby users" : "Save for review"}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
           </div>
 
           <DecisionTrace active={analyzing} verification={verdict ?? null} />

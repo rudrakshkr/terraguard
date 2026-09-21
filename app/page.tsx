@@ -174,8 +174,8 @@ export default function NearbyPage() {
             </p>
           )}
         </div>
-        <div className="flex flex-col gap-2 xs:flex-row xs:items-center sm:flex-row sm:items-center sm:shrink-0">
-          <div className="segmented" role="tablist" aria-label="View mode">
+        <div className="flex flex-col gap-2.5 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-end min-[420px]:gap-3 sm:shrink-0">
+          <div className="segmented w-full min-[420px]:w-auto" role="tablist" aria-label="View mode">
             {(["list", "map"] as const).map((v) => (
               <button
                 key={v}
@@ -190,7 +190,7 @@ export default function NearbyPage() {
               </button>
             ))}
           </div>
-          <Link href="/report" className="btn btn-primary">
+          <Link href="/report" className="btn btn-primary w-full min-[420px]:w-auto">
             <Siren className="h-4 w-4" aria-hidden />
             Report Hazard
           </Link>
