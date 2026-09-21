@@ -66,12 +66,32 @@ async function persistFile(d: CommunityDb): Promise<void> {
 
 async function loadDb(): Promise<CommunityDb> {
   if (kvMode !== "file") {
-    return kvLoadDoc<CommunityDb>(KV_KEY, async () => ({ ...EMPTY }));
+    const d = await kvLoadDoc<CommunityDb>(KV_KEY, async () => ({ ...EMPTY }));
+    return migrate(d);
   }
   if (db) return db;
-  const d = await fallback();
+  const d = migrate(await fallback());
   cacheSet(d);
   return d;
+}
+
+/**
+ * Storage-level hygiene: a user may have at most ONE confirmation per incident.
+ * The write path enforces this inside the atomic mutation; migrate() also
+ * collapses any historical duplicates (earliest response wins) so counts can
+ * never be inflated by pre-existing data.
+ */
+function migrate(d: CommunityDb): CommunityDb {
+  const seen = new Set<string>();
+  const confirmations: ConfirmationRecord[] = [];
+  for (const c of d.confirmations ?? []) {
+    const key = `${c.incident_id}\u0000${c.user_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    confirmations.push(c);
+  }
+  if (confirmations.length === (d.confirmations ?? []).length) return d;
+  return { ...d, confirmations };
 }
 
 /**
@@ -130,6 +150,13 @@ export async function recordConfirmation(
 export async function listConfirmations(incidentId: string): Promise<ConfirmationRecord[]> {
   const d = await loadDb();
   return d.confirmations.filter((c) => c.incident_id === incidentId);
+}
+
+/** Time of the most recent community response for the incident, if any. */
+export async function latestConfirmationAt(incidentId: string): Promise<string | null> {
+  const list = await listConfirmations(incidentId);
+  if (list.length === 0) return null;
+  return list.reduce((latest, c) => (c.at > latest ? c.at : latest), list[0].at);
 }
 
 /** Recount aggregate yes/no from the persisted per-user records. */

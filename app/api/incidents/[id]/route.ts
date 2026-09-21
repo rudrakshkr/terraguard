@@ -4,6 +4,7 @@ import {
   hasConfirmed,
   recordConfirmation,
   confirmationCounts,
+  latestConfirmationAt,
   listComments,
   addComment,
   deleteComment,
@@ -34,10 +35,15 @@ export async function GET(
     const user = await userFromRequest(_req);
     const mine = user ? await hasConfirmed(id, user.id) : null;
 
+    // The latest ACTUAL community response time, from the per-user records
+    // (not the reporter's own timestamp). Null when nobody has responded yet.
+    const lastCommunityAt = await latestConfirmationAt(id);
+
     return NextResponse.json({
       incident,
       comments,
       my_confirmation: mine ? { response: mine.response, at: mine.at } : null,
+      last_community_confirmation_at: lastCommunityAt,
     });
   } catch (err) {
     console.error("[api/incidents/:id GET]", err);

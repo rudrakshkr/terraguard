@@ -341,11 +341,15 @@ export default function IncidentPage() {
               {exampleReportLabel(i.created_at)}
             </span>
           ) : (
-            <FreshnessChip fresh={fresh} minsSinceConfirmed={minsConfirmed} />
+            <FreshnessChip
+              fresh={fresh}
+              minsSinceConfirmed={minsConfirmed}
+              confirmations={i.confirmations_yes ?? 0}
+            />
           )}
-          {(i.confirmations_yes ?? 0) > 0 && (
-            <span className="chip chip-info">
-              Community confirmation · {i.confirmations_yes} {i.confirmations_yes === 1 ? "person" : "people"} confirmed
+          {(i.confirmations_no ?? 0) > 0 && (
+            <span className="chip chip-neutral">
+              {i.confirmations_no} {i.confirmations_no === 1 ? "person reported" : "people reported"} it cleared
             </span>
           )}
           {(i.related_ids?.length ?? 0) > 0 && (
