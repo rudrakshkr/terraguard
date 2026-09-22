@@ -12,6 +12,7 @@ import {
 } from "@/lib/community-store";
 import { userFromRequest, getUserById, isOperatorUser } from "@/lib/auth";
 import { persistenceConfigError } from "@/lib/kv";
+import { canConfirmHazard } from "@/lib/community-policy";
 
 export const runtime = "nodejs";
 // Never cache: incidents and community data must be live across all clients.
@@ -110,6 +111,17 @@ export async function POST(
           : body.confirmed
             ? "yes"
             : "no";
+
+      // Reporter independence: nobody can corroborate the incident they
+      // reported themselves. Enforced here (not only in the UI) so a direct
+      // API call cannot bypass it.
+      const decision = canConfirmHazard(incident, user.id);
+      if (!decision.allowed) {
+        return NextResponse.json(
+          { error: decision.reason, code: decision.code },
+          { status: decision.status },
+        );
+      }
 
       const { record, already } = await recordConfirmation(id, user.id, response);
 

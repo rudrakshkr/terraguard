@@ -7,6 +7,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { seedIncidents } from "./seed-incidents";
 import { kvMode, dataDir, kvLoadDoc, kvSaveDoc, kvMutate, requirePersistentStore, PersistentStorageNotConfiguredError } from "./kv";
+import { shouldPublishFromCorroboration } from "./community-policy";
 import type { Incident, IncidentFilters } from "./types";
 
 const DATA_PATH = path.join(dataDir, ".hillsense-incidents.json");
@@ -239,12 +240,11 @@ export async function confirmIncident(
     const yesCount = counts ? counts.yes : (cur.confirmations_yes ?? 0);
     const noCount = counts ? counts.no : (cur.confirmations_no ?? 0);
 
+    // Corroboration rule lives in lib/community-policy.ts so the API gate and
+    // the publication threshold can never drift apart. `counts` already
+    // excludes the reporter (their own response never corroborates).
     const communityPublishes =
-      stillPresent &&
-      cur.publication === "review_only" &&
-      cur.verification === "needs_review" &&
-      cur.origin !== "seed" &&
-      yesCount >= 2;
+      stillPresent && shouldPublishFromCorroboration(cur, yesCount);
 
     const updated: Incident = {
       ...cur,

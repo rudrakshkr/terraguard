@@ -209,6 +209,10 @@ html.dark {
     justify-content: center;
   }
   .btn:disabled { opacity: .5; cursor: not-allowed; }
+  /* <summary> used as a button (overflow menus) keeps the button look and
+     keeps native keyboard/click behaviour. */
+  summary.btn { list-style: none; cursor: pointer; }
+  summary.btn::-webkit-details-marker { display: none; }
   .btn-primary { background: var(--accent); color: #fff; }
   html.dark .btn-primary { color: #0c1a20; }
   .btn-primary:hover:not(:disabled) { background: var(--accent-strong); }
@@ -361,6 +365,14 @@ html.dark {
   @media (max-width: 640px) {
     .banner { align-items: flex-start; }
   }
+
+  /* ---------- disclosures: secondary incident information ----------
+     Native <details>/<summary> so they are keyboard accessible with no JS.
+     44px minimum target height for comfortable tapping on phones. */
+  .disclosure { border-top: 1px solid var(--border); }
+  .disclosure > summary { list-style: none; }
+  .disclosure > summary::-webkit-details-marker { display: none; }
+  .disclosure > summary:hover { color: var(--accent); }
 
   /* ---------- card metadata row ---------- */
   .meta-row {

@@ -13,8 +13,12 @@ export function SeverityChip({ severity }: { severity: Severity }) {
 /**
  * Operational status. "Active" means the hazard is being observed by the
  * community — it deliberately does not claim that responders are deployed.
+ *
+ * `tone="review"` is used for reports that still need community confirmation so
+ * an unverified but critical report never wears the same alarm styling as an
+ * official public alert. The status text itself is always shown.
  */
-export function StatusChip({ status }: { status: string }) {
+export function StatusChip({ status, tone = "default" }: { status: string; tone?: "default" | "review" }) {
   const map: Record<string, string> = {
     Open: "chip-critical",
     Active: "chip-critical",
@@ -23,8 +27,9 @@ export function StatusChip({ status }: { status: string }) {
   };
   const label =
     status === "Resolved" ? "RESOLVED" : status === "Responding" ? "ACTIVE" : "ACTIVE";
+  const cls = tone === "review" ? "chip-neutral" : map[status] ?? "chip-critical";
   return (
-    <span className={`chip ${map[status] ?? "chip-critical"}`}>
+    <span className={`chip ${cls}`}>
       <span className="dot" />
       {label}
     </span>

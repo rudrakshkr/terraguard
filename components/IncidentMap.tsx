@@ -68,8 +68,10 @@ export default function IncidentMap({
   userLoc?: { lat: number; lng: number; label?: string } | null;
 }) {
   const shownUser = userLoc ?? null;
+  // Shorter on phones so the map never dominates the viewport; full height from
+  // sm upward where there is room for it.
   return (
-    <div className="h-[380px] w-full overflow-hidden rounded-lg border" style={{ borderColor: "var(--border)" }}>
+    <div className="h-[300px] w-full overflow-hidden rounded-lg border sm:h-[380px]" style={{ borderColor: "var(--border)" }}>
       <MapContainer center={HIMACHAL_CENTER} zoom={8} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'

@@ -8,6 +8,8 @@ import { useAuth, authFetch } from "@/hooks/useAuth";
 import { Spinner } from "@/components/Spinner";
 import { SeverityChip } from "@/components/Badge";
 import { fmtAge, minutesSince } from "@/lib/geo";
+import { aiInterpretationOf, reportTitle } from "@/lib/labels";
+import { PUBLICATION_THRESHOLD, corroborationRemaining } from "@/lib/community-policy";
 
 export default function CommunityReviewPage() {
   const { authed, loading: authLoading, user } = useAuth();
@@ -47,6 +49,11 @@ export default function CommunityReviewPage() {
         body: JSON.stringify({ action: "confirm", response }),
       });
       const data = await res.json();
+      if (res.status === 403 && data.code === "own_report") {
+        // Server-side rule: the reporter can never corroborate their own report.
+        setError(data.error ?? "You cannot confirm your own report.");
+        return;
+      }
       if (!res.ok) throw new Error(data.error ?? "Could not record your response.");
 
       if (data.published) {
@@ -139,7 +146,9 @@ export default function CommunityReviewPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           {incidents.map((i) => {
             const count = i.confirmations_yes ?? 0;
-            const isReporter = user?.id === i.reporter_id;
+            const remaining = corroborationRemaining(count);
+            const aiInterp = aiInterpretationOf(i);
+            const isReporter = Boolean(user?.id && i.reporter_id === user.id);
             const busy = busyId === i.id;
 
             return (
@@ -156,11 +165,16 @@ export default function CommunityReviewPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <SeverityChip severity={i.severity} />
                   <span className="chip chip-warn">NEEDS REVIEW</span>
-                  <span className="chip chip-neutral">{count}/2 confirmations</span>
+                  <span className="chip chip-neutral">
+                    {Math.min(count, PUBLICATION_THRESHOLD)} of {PUBLICATION_THRESHOLD} confirmations
+                  </span>
                 </div>
 
-                <h2 className="mt-3 text-lg font-semibold">{i.summary}</h2>
-                <p className="mt-2 text-[13.5px] leading-relaxed muted">{i.description}</p>
+                <h2 className="mt-3 text-lg font-semibold">{reportTitle(i)}</h2>
+                {aiInterp && (
+                  <p className="mt-1 text-[12px] muted">AI interpretation: {aiInterp}</p>
+                )}
+                <p className="mt-2 text-[13.5px] leading-relaxed muted">{i.summary}</p>
 
                 <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-[12px] muted">
                   <span className="inline-flex items-center gap-1.5">
@@ -172,8 +186,11 @@ export default function CommunityReviewPage() {
                 </div>
 
                 {isReporter ? (
-                  <div className="mt-5 rounded-lg border p-3.5 text-[12.5px] muted" style={{ borderColor: "var(--border)" }}>
-                    You submitted this report. Your response cannot count toward independent corroboration.
+                  <div className="mt-5 rounded-lg border p-3.5" style={{ borderColor: "var(--border)" }}>
+                    <p className="text-[13px] font-semibold">Your report is awaiting independent community confirmation.</p>
+                    <p className="mt-1 text-[12.5px] muted">
+                      You cannot confirm your own report. Residents nearby can confirm what they can see directly.
+                    </p>
                   </div>
                 ) : (
                   <div className="mt-5">
@@ -203,7 +220,9 @@ export default function CommunityReviewPage() {
 
                 <div className="mt-4 flex items-center justify-between gap-3 border-t pt-3" style={{ borderColor: "var(--border)" }}>
                   <span className="text-[11.5px] faint">
-                    {count === 0 ? "First corroboration needed" : `${2 - Math.min(count, 2)} more independent confirmation${count >= 1 ? "" : "s"} needed`}
+                    {remaining === 0
+                      ? "Enough confirmations recorded"
+                      : `${remaining} more independent confirmation${remaining === 1 ? "" : "s"} needed`}
                   </span>
                   <Link href={`/incident/${i.id}`} className="text-[12px] font-semibold underline" style={{ color: "var(--accent)" }}>
                     View details
