@@ -42,7 +42,7 @@ export default function Navbar() {
       {/* Single container shared with page content — identical max-width & padding. */}
       <div className="container-page flex h-14 items-center gap-2 xl:gap-3">
         {/* Brand: icon always; two-line wordmark only when there is room (xl+) */}
-        <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="HillSense AI home">
+        <Link href="/" className="flex shrink-0 items-center gap-2.5 max-md:min-h-11" aria-label="HillSense AI home">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ background: "var(--accent-soft)" }}>
             <Mountain className="h-4.5 w-4.5" style={{ color: "var(--accent)" }} />
           </span>
@@ -122,7 +122,7 @@ export default function Navbar() {
                   to a single control per surface on phones. */}
               <details className="relative">
                 <summary
-                  className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-lg border py-0 pl-1 pr-2 text-[12px] font-semibold xl:h-9 xl:gap-2 xl:pl-1.5 xl:pr-2.5 xl:text-[12.5px]"
+                  className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-lg border py-0 pl-1 pr-2 text-[12px] font-semibold max-md:h-11 xl:h-9 xl:gap-2 xl:pl-1.5 xl:pr-2.5 xl:text-[12.5px]"
                   style={{ borderColor: "var(--border)", color: "var(--text)" }}
                   title={`Account — signed in as ${user.display_name}`}
                   aria-label="Account menu"
@@ -149,20 +149,20 @@ export default function Navbar() {
                   <span className="block truncate px-3 py-1.5 text-[11px] faint">Signed in as {user.display_name}</span>
                   <Link
                     href="/profile"
-                    className="flex items-center gap-2 rounded-md px-3 py-2 text-[13px] hover:bg-[var(--surface-2)]"
+                    className="flex items-center gap-2 rounded-md px-3 py-2 text-[13px] hover:bg-[var(--surface-2)] max-md:min-h-11"
                   >
                     <UserIcon className="h-4 w-4" aria-hidden /> Profile
                   </Link>
                   <Link
                     href="/my-reports"
-                    className="flex items-center gap-2 rounded-md px-3 py-2 text-[13px] hover:bg-[var(--surface-2)]"
+                    className="flex items-center gap-2 rounded-md px-3 py-2 text-[13px] hover:bg-[var(--surface-2)] max-md:min-h-11"
                   >
                     <ClipboardList className="h-4 w-4" aria-hidden /> My Reports
                   </Link>
                   {user.is_operator && (
                     <Link
                       href={COMMAND_CENTER_LINK.href}
-                      className="flex items-center gap-2 rounded-md px-3 py-2 text-[13px] hover:bg-[var(--surface-2)] md:hidden"
+                      className="flex items-center gap-2 rounded-md px-3 py-2 text-[13px] hover:bg-[var(--surface-2)] max-md:min-h-11 md:hidden"
                     >
                       <LayoutDashboard className="h-4 w-4" aria-hidden /> Command Center
                     </Link>
@@ -173,7 +173,7 @@ export default function Navbar() {
                       await signOut();
                       router.push("/");
                     }}
-                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-[13px] hover:bg-[var(--surface-2)]"
+                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-[13px] hover:bg-[var(--surface-2)] max-md:min-h-11"
                   >
                     <LogOut className="h-4 w-4" aria-hidden /> Sign out
                   </button>

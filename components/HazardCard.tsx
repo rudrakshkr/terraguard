@@ -35,10 +35,13 @@ export function HazardCard({
   const distance = km != null && Number.isFinite(km) ? fmtDistance(km) : null;
 
   return (
-    <li>
+    /* min-w-0 is load-bearing: grid items default to min-width:auto, and the
+       nowrap+truncate location line would otherwise force every card in the
+       list to the width of the longest address (overflowing 320px screens). */
+    <li className="min-w-0">
       <Link
         href={`/incident/${i.id}`}
-        className="card fade-up block p-4 transition hover:-translate-y-px"
+        className="card fade-up block w-full p-4 transition hover:-translate-y-px"
         style={tone === "review" ? { borderColor: "color-mix(in srgb, var(--warn) 32%, var(--border))" } : undefined}
         aria-label={`${reportTitle(i)}, ${i.severity} severity, ${publicationBadgeLabel(i)}`}
       >

@@ -219,8 +219,10 @@ function LoginForm() {
       </div>
 
       <p className="mt-4 text-center text-[11.5px] faint">
-        By continuing you agree to use HillSense responsibly.{" "}
-        <Link href="/" className="underline">Browse hazards without an account</Link>
+        By continuing you agree to use HillSense responsibly.
+      </p>
+      <p className="mt-1 text-center">
+        <Link href="/" className="tap-link justify-center underline">Browse hazards without an account</Link>
       </p>
     </div>
   );

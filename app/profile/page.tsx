@@ -266,7 +266,7 @@ export default function ProfilePage() {
 
   return (
     <div className="container-page mx-auto max-w-2xl py-6 sm:py-8">
-      <Link href="/home" className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-medium muted hover:opacity-80">
+      <Link href="/home" className="tap-link max-md:-ml-2 mb-4 gap-1.5 text-[13px] font-medium muted hover:opacity-80 max-md:px-2">
         <ArrowLeft className="h-4 w-4" /> Back to my feed
       </Link>
 

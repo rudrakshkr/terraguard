@@ -175,7 +175,9 @@ export default function AskPage() {
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             placeholder="Ask about landslides, floods, evacuation and mountain safety…"
-            className="flex-1 bg-transparent px-3 py-2 text-[13.5px] focus:outline-none"
+            /* min-w-0 lets the field shrink below its intrinsic width so the
+               send button can never be pushed off a 320px screen. */
+            className="min-w-0 flex-1 bg-transparent px-3 py-2 text-[13.5px] focus:outline-none"
             style={{ color: "var(--text)" }}
             aria-label="Your question"
           />
@@ -190,9 +192,14 @@ export default function AskPage() {
               <RotateCcw className="h-4 w-4" />
             </button>
           )}
-          <button type="submit" disabled={busy || !question.trim()} className="btn btn-primary">
+          <button
+            type="submit"
+            disabled={busy || !question.trim()}
+            className="btn btn-primary shrink-0 max-[359px]:!px-3"
+            aria-label="Ask"
+          >
             {busy ? <Spinner className="h-3.5 w-3.5" /> : <SendHorizontal className="h-4 w-4" />}
-            Ask
+            <span className="hidden min-[360px]:inline">Ask</span>
           </button>
         </form>
         <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-[11px] faint">

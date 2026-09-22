@@ -18,23 +18,36 @@ const SEV_HEX: Record<string, string> = {
   Low: "#16a34a",
 };
 
+/**
+ * Marker hit box, in px. A 14px dot is fine with a mouse but a coin toss with
+ * a thumb, so phones get a 40px invisible box with the same 14px dot centred
+ * inside it — the map looks identical, it is just far easier to tap.
+ * Read at icon-creation time; the map is client-only (ssr: false).
+ */
+function markerBox(): number {
+  if (typeof window === "undefined") return 14;
+  return window.matchMedia("(max-width: 640px)").matches ? 40 : 14;
+}
+
 function dotIcon(severity: Incident["severity"], active: boolean) {
   const hex = SEV_HEX[severity] ?? "#64748b";
+  const box = markerBox();
   return L.divIcon({
     className: "",
-    html: `<span class="marker-dot ${active ? "is-active" : ""}" style="display:block;width:14px;height:14px;background:${hex}"></span>`,
-    iconSize: [14, 14],
-    iconAnchor: [7, 7],
-    popupAnchor: [0, -9],
+    html: `<span style="display:flex;width:${box}px;height:${box}px;align-items:center;justify-content:center"><span class="marker-dot ${active ? "is-active" : ""}" style="display:block;width:14px;height:14px;background:${hex}"></span></span>`,
+    iconSize: [box, box],
+    iconAnchor: [box / 2, box / 2],
+    popupAnchor: [0, -(box / 2) - 2],
   });
 }
 
 function userIcon() {
+  const box = Math.max(16, markerBox());
   return L.divIcon({
     className: "",
-    html: `<span class="user-dot" style="display:block;width:16px;height:16px"></span>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
+    html: `<span style="display:flex;width:${box}px;height:${box}px;align-items:center;justify-content:center"><span class="user-dot" style="display:block;width:16px;height:16px"></span></span>`,
+    iconSize: [box, box],
+    iconAnchor: [box / 2, box / 2],
   });
 }
 
@@ -101,7 +114,16 @@ export default function IncidentMap({
       className="relative h-[300px] w-full overflow-hidden rounded-lg border sm:h-[380px]"
       style={{ borderColor: "var(--border)" }}
     >
-      <MapContainer center={HIMACHAL_CENTER} zoom={8} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
+      <MapContainer
+        center={HIMACHAL_CENTER}
+        zoom={8}
+        scrollWheelZoom
+        style={{ height: "100%", width: "100%" }}
+        /* The attribution link is legally required but not a control — it
+           keeps its natural (small) size on phones; the audit harness is told
+           to ignore it via data-attr. Zoom control sizing is handled in CSS. */
+        attributionControl
+      >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"

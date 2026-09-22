@@ -163,7 +163,7 @@ export default function OnboardingPage() {
                   type="button"
                   aria-pressed={manualMode === m}
                   onClick={() => setManualMode(m)}
-                  className="rounded-md px-2.5 py-1 text-[12px] font-semibold capitalize"
+                  className="rounded-md px-2.5 py-1 text-[12px] font-semibold capitalize max-md:min-h-11 max-md:px-3"
                   style={{
                     background: manualMode === m ? "var(--accent-soft)" : "transparent",
                     color: manualMode === m ? "var(--accent)" : "var(--text-2)",
@@ -293,7 +293,7 @@ export default function OnboardingPage() {
       </div>
 
       <p className="mt-4 text-center text-[11.5px] faint">
-        <Link href="/" className="underline">Skip for now — just show me the public map</Link>
+        <Link href="/" className="tap-link justify-center underline">Skip for now — just show me the public map</Link>
       </p>
     </div>
   );

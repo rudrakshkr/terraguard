@@ -440,7 +440,7 @@ export default function ReportPage() {
                       type="button"
                       aria-pressed={happeningNow === n.value}
                       onClick={() => setHappeningNow(n.value)}
-                      className="flex-1 rounded-md px-2 py-1.5 text-[12.5px] font-semibold"
+                      className="flex-1 rounded-md px-2 py-1.5 text-[12.5px] font-semibold max-md:min-h-11"
                       style={{
                         background: happeningNow === n.value ? "var(--accent-soft)" : "transparent",
                         color: happeningNow === n.value ? "var(--accent)" : "var(--text-2)",
@@ -465,7 +465,7 @@ export default function ReportPage() {
                     type="button"
                     onClick={() => setLang("en-IN")}
                     aria-pressed={lang === "en-IN"}
-                    className="px-2.5 py-1"
+                    className="px-2.5 py-1 max-md:min-h-11 max-md:px-3.5"
                     style={lang === "en-IN" ? { background: "var(--accent)", color: "#fff" } : { color: "var(--text-2)" }}
                   >
                     English
@@ -474,7 +474,7 @@ export default function ReportPage() {
                     type="button"
                     onClick={() => setLang("hi-IN")}
                     aria-pressed={lang === "hi-IN"}
-                    className="px-2.5 py-1"
+                    className="px-2.5 py-1 max-md:min-h-11 max-md:px-3.5"
                     style={lang === "hi-IN" ? { background: "var(--accent)", color: "#fff" } : { color: "var(--text-2)" }}
                   >
                     हिन्दी
@@ -547,7 +547,7 @@ export default function ReportPage() {
                     type="button"
                     aria-pressed={active}
                     onClick={() => setAffected((a) => (active ? a.filter((x) => x !== opt) : [...a, opt]))}
-                    className="rounded-full border px-3 py-1.5 text-[12.5px] font-medium"
+                    className="rounded-full border px-3 py-1.5 text-[12.5px] font-medium max-md:min-h-11 max-md:px-4"
                     style={{
                       borderColor: active ? "var(--accent)" : "var(--border)",
                       background: active ? "var(--accent-soft)" : "transparent",

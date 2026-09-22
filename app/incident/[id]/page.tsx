@@ -651,7 +651,7 @@ export default function IncidentPage() {
     <div className="container-page mx-auto max-w-4xl py-5 sm:py-8">
       {/* ---- Top bar: back, revalidation state, overflow actions ---- */}
       <div className="no-print mb-4 flex flex-wrap items-center justify-between gap-2">
-        <Link href="/" className="inline-flex items-center gap-1.5 text-[13px] font-medium muted hover:opacity-80">
+        <Link href="/" className="tap-link max-md:-ml-2 gap-1.5 text-[13px] font-medium muted hover:opacity-80 max-md:px-2">
           <ArrowLeft className="h-4 w-4" aria-hidden /> Nearby hazards
         </Link>
         <div className="flex items-center gap-2">
@@ -676,14 +676,14 @@ export default function IncidentPage() {
               <button
                 type="button"
                 onClick={() => downloadPDF(i, distance)}
-                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-[13px] hover:bg-[var(--surface-2)]"
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-[13px] hover:bg-[var(--surface-2)] max-md:min-h-11"
               >
                 <Download className="h-4 w-4" aria-hidden /> Download PDF
               </button>
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-[13px] hover:bg-[var(--surface-2)]"
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-[13px] hover:bg-[var(--surface-2)] max-md:min-h-11"
               >
                 <Printer className="h-4 w-4" aria-hidden /> Print
               </button>
@@ -1085,7 +1085,7 @@ export default function IncidentPage() {
                           <button
                             type="button"
                             onClick={() => toggleLike(c.id, c.liked_by_me ?? false)}
-                            className="inline-flex items-center gap-1 text-[11px] font-medium"
+                            className="inline-flex items-center gap-1 text-[11px] font-medium max-md:min-h-11 max-md:px-1"
                             style={{ color: c.liked_by_me ? "var(--warn)" : "var(--text-2)" }}
                             aria-label={c.liked_by_me ? "You liked this comment" : "Like this comment"}
                           >

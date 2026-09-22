@@ -392,6 +392,37 @@ html.dark {
 }
 
 /* ================================================================
+   PHONES — touch sizing.
+   Width-based (not pointer-based) so small screens get real tap targets
+   even on a fine-pointer device, and desktop density never changes.
+   44px is the comfortable minimum for a one-handed thumb.
+   ================================================================ */
+@media (max-width: 640px) {
+  /* Controls the user must hit reliably. */
+  .btn { min-height: 44px; }
+  .btn-sm { min-height: 40px; }
+  .btn-icon { width: 44px; min-width: 44px; }
+  .btn-header-sm { height: 44px; }
+  .btn-header-sm.btn-icon { width: 44px; min-width: 44px; }
+
+  /* Form fields match, so stacked rows stay flush and easy to tap. */
+  .input, select.input, textarea.input { min-height: 44px; }
+  textarea.input { min-height: 88px; }
+
+  /* Segmented controls (List/Map, Yes/No, auto/manual): the container grows
+     so each option button is a 40px target, not a 30px sliver. */
+  .segmented, .segmented-sm { height: auto; min-height: 44px; padding: 3px; }
+  .segmented > button, .segmented-sm > button { min-height: 40px; padding: 0 14px; }
+
+  /* Text links that act as controls get a finger-sized hit area. */
+  .tap-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
+
+/* ================================================================
    OVERRIDES — element-scoped fixes that must beat the component layer.
    ================================================================ */
 
@@ -410,13 +441,36 @@ html:not(.dark) .leaflet-tile { filter: saturate(0.9); }
 html.dark .leaflet-tile { filter: brightness(0.75) saturate(0.7) contrast(1.05); }
 .leaflet-control-attribution { background: color-mix(in srgb, var(--surface) 85%, transparent) !important; color: var(--text-2) !important; font-size: 10px; }
 .leaflet-control-attribution a { color: var(--accent) !important; }
+/* Attribution is a legal requirement, not a control — it stays compact, but on
+   phones it is nudged up to a legible size rather than a 10px squint. */
+@media (max-width: 640px) {
+  .leaflet-control-attribution { font-size: 11px; padding: 1px 4px; }
+}
 .leaflet-bar, .leaflet-bar a { background: var(--surface) !important; color: var(--text) !important; border-color: var(--border) !important; }
 .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
 .leaflet-popup-content-wrapper { border-radius: 10px; }
 .leaflet-popup-content { margin: 12px 14px; font-size: 13px; }
 
-/* markers */
+/* markers — the coloured dot keeps its size; the icon box around it grows on
+   phones (see IncidentMap.markerBox) so a thumb can hit a marker without
+   pixel-perfect aim. */
 .marker-dot { border-radius: 999px; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+/* Leaflet's default zoom buttons are 30px squares — a hard tap on a phone.
+   .leaflet-touch .leaflet-bar a (Leaflet sets that class on touch devices)
+   is its own 30px rule, so we must match it AND come after it; scoping under
+   .leaflet-container does both regardless of stylesheet order. */
+@media (max-width: 640px) {
+  .leaflet-container .leaflet-touch .leaflet-bar a,
+  .leaflet-container .leaflet-bar a {
+    /* !important because Leaflet ships its own 30px rule unlayered, and an
+       unlayered third-party rule beats any of ours regardless of
+       specificity. This is a vendor-widget override, not a design token. */
+    width: 44px !important;
+    height: 44px !important;
+    line-height: 44px !important;
+    font-size: 20px !important;
+  }
+}
 html.dark .marker-dot { border-color: #1a232a; }
 .marker-dot.is-active { animation: markerPulse 1.8s ease-out infinite; }
 @keyframes markerPulse {
