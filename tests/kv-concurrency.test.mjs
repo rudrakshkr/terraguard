@@ -253,6 +253,36 @@ async function suiteBlob() {
   check("S2-D: counts match records",
     counts.yes === dbB.filter((c) => c.response === "yes").length &&
     counts.no === dbB.filter((c) => c.response === "no").length);
+
+  // E: a stored document that predates a feature must not break it. Production
+  // stores created before comment likes existed have no `comment_likes` key —
+  // reading it as-is threw and the request answered 500.
+  files.set(
+    "hillsense/data/hillsense:community:v1.json",
+    JSON.stringify({
+      confirmations: [],
+      comments: [{
+        id: "cm_legacy",
+        incident_id: target.id,
+        user_id: "legacy-user",
+        author_name: "Legacy User",
+        body: "written before likes existed",
+        created_at: new Date().toISOString(),
+      }],
+    }),
+  );
+  const legacyLike = await cs.setCommentLike("cm_legacy", "legacy-user", true);
+  check(
+    "S2-E: a like works on a document without comment_likes",
+    legacyLike.ok === true && legacyLike.count === 1,
+    JSON.stringify(legacyLike),
+  );
+  const legacyCounts = await cs.likeCountsFor([{ id: "cm_legacy" }]);
+  check("S2-E: the legacy like is readable again", legacyCounts.cm_legacy === 1, JSON.stringify(legacyCounts));
+  const legacyReplay = await cs.setCommentLike("cm_legacy", "legacy-user", true);
+  check("S2-E: replaying it stays idempotent", legacyReplay.ok === true && legacyReplay.count === 1, JSON.stringify(legacyReplay));
+  const legacyComments = await cs.listComments(target.id);
+  check("S2-E: the legacy comment is still readable", legacyComments.some((c) => c.id === "cm_legacy"));
 }
 
 /* ==================================== run ======================================= */

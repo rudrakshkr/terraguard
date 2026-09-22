@@ -86,30 +86,49 @@ async function loadDb(): Promise<CommunityDb> {
 }
 
 /**
- * Storage-level hygiene: a user may have at most ONE confirmation per incident.
- * The write path enforces this inside the atomic mutation; migrate() also
- * collapses any historical duplicates (earliest response wins) so counts can
- * never be inflated by pre-existing data.
+ * Storage-level hygiene, applied on EVERY read and inside every mutation.
+ *
+ * Two jobs:
+ *  1. Shape — guarantee `confirmations`, `comments` and `comment_likes` exist.
+ *     A document written before a feature was added has no such key, and
+ *     reading it as-is threw (undefined.findIndex) so the whole request 500'd:
+ *     the classic "works on a fresh store, fails on production data" bug.
+ *  2. Dedupe — a user may have at most ONE confirmation per incident and one
+ *     like per comment. Historical duplicates (earliest wins) are collapsed so
+ *     counts can never be inflated by pre-existing data.
  */
-function migrate(d: CommunityDb): CommunityDb {    const seen = new Set<string>();
-    const confirmations: ConfirmationRecord[] = [];
-    for (const c of d.confirmations ?? []) {
-      const key = `${c.incident_id}\u0000${c.user_id}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      confirmations.push(c);
-    }
-    const likeSeen = new Set<string>();
-    const comment_likes: CommentLikeRecord[] = [];
-    for (const l of d.comment_likes ?? []) {
-      const key = `${l.comment_id}\u0000${l.user_id}`;
-      if (likeSeen.has(key)) continue;
-      likeSeen.add(key);
-      comment_likes.push(l);
-    }
-    if (confirmations.length === (d.confirmations ?? []).length &&
-        comment_likes.length === (d.comment_likes ?? []).length) return d;
-    return { ...d, confirmations, comment_likes };
+function migrate(raw: CommunityDb): CommunityDb {
+  const d = raw ?? ({} as CommunityDb);
+  const confirmationsIn = d.confirmations ?? [];
+  const comments = d.comments ?? [];
+  const likesIn = d.comment_likes ?? [];
+
+  const seen = new Set<string>();
+  const confirmations: ConfirmationRecord[] = [];
+  for (const c of confirmationsIn) {
+    const key = `${c.incident_id}\u0000${c.user_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    confirmations.push(c);
+  }
+
+  const likeSeen = new Set<string>();
+  const comment_likes: CommentLikeRecord[] = [];
+  for (const l of likesIn) {
+    const key = `${l.comment_id}\u0000${l.user_id}`;
+    if (likeSeen.has(key)) continue;
+    likeSeen.add(key);
+    comment_likes.push(l);
+  }
+
+  const unchanged =
+    d.confirmations === confirmationsIn &&
+    d.comments === comments &&
+    d.comment_likes === likesIn &&
+    confirmations.length === confirmationsIn.length &&
+    comment_likes.length === likesIn.length;
+  if (unchanged) return d;
+  return { confirmations, comments, comment_likes };
 }
 
 /**
@@ -119,7 +138,10 @@ function migrate(d: CommunityDb): CommunityDb {    const seen = new Set<string>(
  */
 async function mutate<R>(fn: (d: CommunityDb) => { doc: CommunityDb; result: R }): Promise<R> {
   if (kvMode !== "file") {
-    return kvMutate<CommunityDb, R>(KV_KEY, async () => ({ ...EMPTY }), async (cur) => fn(cur));
+    // kvMutate hands us the stored document verbatim, without the shape/dup
+    // normalisation loadDb applies. Normalise here too, or a document written
+    // before a field existed (e.g. no comment_likes) throws inside fn.
+    return kvMutate<CommunityDb, R>(KV_KEY, async () => ({ ...EMPTY }), async (cur) => fn(migrate(cur)));
   }
   // Confirmations/comments must never land in serverless tmpfs (lost between
   // requests on Vercel). Local dev file mode is fine.
@@ -135,7 +157,7 @@ async function mutate<R>(fn: (d: CommunityDb) => { doc: CommunityDb; result: R }
 
 export async function hasConfirmed(incidentId: string, userId: string): Promise<ConfirmationRecord | null> {
   const d = await loadDb();
-  return d.confirmations.find((c) => c.incident_id === incidentId && c.user_id === userId) ?? null;
+  return (d.confirmations ?? []).find((c) => c.incident_id === incidentId && c.user_id === userId) ?? null;
 }
 
 /**
@@ -151,7 +173,8 @@ export async function recordConfirmation(
     record: ConfirmationRecord;
     already: boolean;
   }>((d) => {
-    const existing = d.confirmations.find(
+    const confirmations = d.confirmations ?? [];
+    const existing = confirmations.find(
       (c) => c.incident_id === incidentId && c.user_id === userId,
     );
     if (existing) return { doc: d, result: { record: existing, already: true } };
@@ -162,7 +185,7 @@ export async function recordConfirmation(
       at: new Date().toISOString(),
     };
     return {
-      doc: { ...d, confirmations: [...d.confirmations, record] },
+      doc: { ...d, confirmations: [...confirmations, record] },
       result: { record, already: false },
     };
   }) as Promise<{ record: ConfirmationRecord; already: false } | { record: ConfirmationRecord; already: true }>;
@@ -170,7 +193,7 @@ export async function recordConfirmation(
 
 export async function listConfirmations(incidentId: string): Promise<ConfirmationRecord[]> {
   const d = await loadDb();
-  return d.confirmations.filter((c) => c.incident_id === incidentId);
+  return (d.confirmations ?? []).filter((c) => c.incident_id === incidentId);
 }
 
 /** Time of the most recent community response for the incident, if any. */
@@ -206,7 +229,7 @@ export async function commentCountsFor(incidents: { id: string }[]): Promise<Rec
     const d = await loadDb();
     const counts: Record<string, number> = {};
     for (const i of incidents) counts[i.id] = 0;
-    for (const c of d.comments) {
+    for (const c of d.comments ?? []) {
       if (counts[c.incident_id] !== undefined) counts[c.incident_id] += 1;
     }
     return counts;
@@ -217,7 +240,7 @@ export async function commentCountsFor(incidents: { id: string }[]): Promise<Rec
 
 export async function listComments(incidentId: string): Promise<CommentRecord[]> {
   const d = await loadDb();
-  return d.comments
+  return (d.comments ?? [])
     .filter((c) => c.incident_id === incidentId)
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
@@ -235,13 +258,14 @@ export async function addComment(
 
   return mutate<{ ok: boolean; comment?: CommentRecord; error?: string }>((d) => {
     const now = Date.now();
+    const comments = d.comments ?? [];
     // Idempotent replay: a synced offline comment retried with the same
     // client-generated key returns the original record, never a duplicate.
     if (clientId) {
-      const replay = d.comments.find((c) => c.client_id === clientId);
+      const replay = comments.find((c) => c.client_id === clientId);
       if (replay) return { doc: d, result: { ok: true, comment: replay } };
     }
-    const dup = d.comments.find(
+    const dup = comments.find(
       (c) =>
         c.incident_id === incidentId &&
         c.user_id === userId &&
@@ -250,14 +274,14 @@ export async function addComment(
     );
     if (dup) return { doc: d, result: { ok: false, error: "You just posted that comment." } };
 
-    const recentByUser = d.comments.filter(
+    const recentByUser = comments.filter(
       (c) => c.user_id === userId && now - new Date(c.created_at).getTime() < REPEAT_WINDOW_MS,
     );
     if (recentByUser.length >= 3) {
       return { doc: d, result: { ok: false, error: "You're posting too quickly. Please wait a moment." } };
     }
 
-    if (d.comments.filter((c) => c.incident_id === incidentId).length >= MAX_COMMENTS_PER_INCIDENT) {
+    if (comments.filter((c) => c.incident_id === incidentId).length >= MAX_COMMENTS_PER_INCIDENT) {
       return { doc: d, result: { ok: false, error: "This incident has reached its comment limit." } };
     }
 
@@ -271,7 +295,7 @@ export async function addComment(
       ...(clientId ? { client_id: clientId } : {}),
     };
     return {
-      doc: { ...d, comments: [...d.comments, comment] },
+      doc: { ...d, comments: [...comments, comment] },
       result: { ok: true, comment },
     };
   }).then((r) =>
@@ -281,9 +305,10 @@ export async function addComment(
 
 export async function deleteComment(commentId: string, userId: string): Promise<boolean> {
   return mutate<boolean>((d) => {
-    const idx = d.comments.findIndex((c) => c.id === commentId && c.user_id === userId);
+    const all = d.comments ?? [];
+    const idx = all.findIndex((c) => c.id === commentId && c.user_id === userId);
     if (idx === -1) return { doc: d, result: false };
-    const comments = [...d.comments];
+    const comments = [...all];
     comments.splice(idx, 1);
     return { doc: { ...d, comments }, result: true };
   });
@@ -331,7 +356,7 @@ export function corroboratingReportsFor(incident: Incident, pool: Incident[]): n
 
 export async function hasLikedComment(commentId: string, userId: string): Promise<CommentLikeRecord | null> {
   const d = await loadDb();
-  return d.comment_likes.find((l) => l.comment_id === commentId && l.user_id === userId) ?? null;
+  return (d.comment_likes ?? []).find((l) => l.comment_id === commentId && l.user_id === userId) ?? null;
 }
 
 type LikeOutcome =
@@ -359,7 +384,8 @@ export async function setCommentLike(
     if (!commentId || !(d.comments ?? []).some((c) => c.id === commentId)) {
       return { doc: d, result: { ok: false, error: "This comment is no longer available." } };
     }
-    const idx = d.comment_likes.findIndex((l) => l.comment_id === commentId && l.user_id === userId);
+    const likes = d.comment_likes ?? [];
+    const idx = likes.findIndex((l) => l.comment_id === commentId && l.user_id === userId);
     if (liked) {
       if (idx >= 0) return { doc: d, result: { ok: true, liked: true, count: countFor(d, commentId) } };
       const like: CommentLikeRecord = {
@@ -369,14 +395,14 @@ export async function setCommentLike(
         ...(clientId ? { client_id: clientId } : {}),
       };
       return {
-        doc: { ...d, comment_likes: [...d.comment_likes, like] },
+        doc: { ...d, comment_likes: [...likes, like] },
         result: { ok: true, liked: true, count: countFor(d, commentId) + 1 },
       };
     }
     if (idx < 0) return { doc: d, result: { ok: true, liked: false, count: countFor(d, commentId) } };
-    const likes = d.comment_likes.filter((_, n) => n !== idx);
+    const remaining = likes.filter((_, n) => n !== idx);
     return {
-      doc: { ...d, comment_likes: likes },
+      doc: { ...d, comment_likes: remaining },
       result: { ok: true, liked: false, count: countFor(d, commentId) - 1 },
     };
   });
@@ -396,7 +422,7 @@ export async function toggleCommentLike(
 }
 
 function countFor(d: CommunityDb, commentId: string): number {
-  return d.comment_likes.filter((l) => l.comment_id === commentId).length;
+  return (d.comment_likes ?? []).filter((l) => l.comment_id === commentId).length;
 }
 
 export async function likeCountsFor(comments: { id: string }[]): Promise<Record<string, number>> {
