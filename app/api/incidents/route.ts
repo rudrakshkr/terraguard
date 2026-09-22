@@ -3,8 +3,10 @@ import { listIncidents, addIncident } from "@/lib/store";
 import { LOCATIONS } from "@/lib/threat";
 import { findRelated, haversineKm, fmtDistance } from "@/lib/geo";
 import { userFromRequest, publicUser } from "@/lib/auth";
+import { analyzeIncident } from "@/lib/hillsense";
+import { putReportPhoto } from "@/lib/avatar-store";
 import { listComments, commentCountsFor } from "@/lib/community-store";
-import type { IncidentAnalysis, Incident, Severity } from "@/lib/types";
+import type { Incident, Severity } from "@/lib/types";
 
 export const runtime = "nodejs";
 // Never cache: incidents and community data must be live across all clients.
@@ -72,25 +74,41 @@ interface ReporterDetails {
 }
 
 interface CreateBody {
+  client_id?: string;
   location?: string;
   lat?: number;
   lng?: number;
   coords_approximate?: boolean;
   description?: string;
   reporter_details?: ReporterDetails;
-  analysis?: IncidentAnalysis;
-  aiAvailable?: boolean;
-  sources?: { title: string; doc?: string }[];
-  evidence?: Incident["evidence"];
-  pipeline?: Incident["pipeline"];
-  verification?: Incident["verification"];
-  verification_reasons?: string[];
-  publication?: Incident["publication"];
+  image?: { name?: string; type?: string; data?: string } | null;
+}
+
+const VALID_TYPES = new Set([
+  "Landslide", "Rockfall", "Flood", "Flash Flood", "Road Blockage",
+  "Building Damage", "Forest Fire", "Avalanche", "Other",
+]);
+
+function buildReportContext(details?: ReporterDetails, location?: string): string {
+  const parts: string[] = [];
+  if (details?.hazard_type) parts.push(`Hazard type: ${details.hazard_type}`);
+  if (details?.when) parts.push(`When: ${details.when}${details.when_exact ? ` (${details.when_exact})` : ""}`);
+  if (details?.happening_now) parts.push(`Happening right now: ${details.happening_now}`);
+  if (details?.affected?.length) parts.push(`What is affected: ${details.affected.join(", ")}`);
+  if (details?.casualties) parts.push(`People trapped/injured/missing: ${details.casualties}`);
+  if (details?.observed_severity) parts.push(`Reporter-observed severity: ${details.observed_severity}`);
+  if (details?.observations) parts.push(`Additional observations: ${details.observations}`);
+  if (location) parts.push(`Location: ${location}`);
+  return parts.join("\n");
+}
+
+function validCoords(lat: unknown, lng: unknown): lat is number {
+  return typeof lat === "number" && typeof lng === "number" && Number.isFinite(lat) && Number.isFinite(lng)
+    && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
 }
 
 export async function POST(req: NextRequest) {
   try {
-    // Only authenticated users can create reports.
     const user = await userFromRequest(req);
     if (!user) {
       return NextResponse.json(
@@ -100,66 +118,108 @@ export async function POST(req: NextRequest) {
     }
 
     const body = (await req.json()) as CreateBody;
-    const a = body.analysis;
-    if (!a || !a.incident_type || !a.severity) {
-      return NextResponse.json({ error: "A completed analysis is required to save an incident." }, { status: 400 });
+    const clientId = typeof body.client_id === "string" ? body.client_id.trim().slice(0, 80) : "";
+
+    if (clientId) {
+      const existing = (await listIncidents()).find(
+        (i) => i.client_id === clientId && i.reporter_id === user.id,
+      );
+      if (existing) {
+        return NextResponse.json({ incident: existing, related: [], replayed: true }, { status: 200 });
+      }
     }
-    const location = (body.location ?? "").trim() || "Unnamed location";
-    const known = LOCATIONS.some((l) => l.name.toLowerCase() === location.toLowerCase());
-    const hasRealCoords =
-      typeof body.lat === "number" &&
-      typeof body.lng === "number" &&
-      Number.isFinite(body.lat) &&
-      Number.isFinite(body.lng);
-    const coordsApproximate = body.coords_approximate ?? (!known && !hasRealCoords);
+
+    const description = (body.description ?? "").trim();
+    const details = body.reporter_details ?? {};
+    const hazardType = (details.hazard_type ?? "").trim();
+    if (!VALID_TYPES.has(hazardType)) {
+      return NextResponse.json({ error: "Please choose a valid hazard type." }, { status: 400 });
+    }
+    if (!description && !body.image?.data) {
+      return NextResponse.json({ error: "Add a description or photo before submitting." }, { status: 400 });
+    }
+
+    const locationText = (body.location ?? "").trim();
+    const known = LOCATIONS.find((l) => l.name.toLowerCase() === locationText.toLowerCase());
+    const hasRealCoords = validCoords(body.lat, body.lng);
+    const lat = hasRealCoords ? body.lat : known?.lat;
+    const lng = hasRealCoords ? body.lng : known?.lng;
+    const coordsApproximate = hasRealCoords ? body.coords_approximate === true : true;
+    if (!validCoords(lat, lng)) {
+      return NextResponse.json(
+        { error: "A map location is required. Use your current location or choose a known place before submitting." },
+        { status: 400 },
+      );
+    }
+
+    let imageData: string | null = null;
+    let photoUrl: string | undefined;
+    if (body.image?.data) {
+      const type = body.image.type ?? "image/jpeg";
+      if (!["image/jpeg", "image/png", "image/webp"].includes(type)) {
+        return NextResponse.json({ error: "Unsupported image type. Use JPG, PNG or WebP." }, { status: 415 });
+      }
+      imageData = body.image.data;
+      const stored = await putReportPhoto(user.id, imageData, type);
+      if ("error" in stored) return NextResponse.json({ error: stored.error }, { status: 413 });
+      photoUrl = stored.url;
+    }
+
+    // IMPORTANT: the server recomputes the AI assessment from the raw report.
+    // The client may preview an analysis, but it cannot choose the stored
+    // verification/publication result.
+    const result = await analyzeIncident({
+      text: description,
+      imageBase64: imageData,
+      context: buildReportContext(details, locationText),
+      hazardType,
+      location: { lat: lat as number, lng: lng as number },
+    });
 
     const now = new Date().toISOString();
     const incident = await addIncident({
       created_at: now,
-      location,
-      lat: hasRealCoords ? (body.lat as number) : 31.9,
-      lng: hasRealCoords ? (body.lng as number) : 77.1,
+      location: locationText || known?.name || "Unnamed location",
+      lat: lat as number,
+      lng: lng as number,
       coords_approximate: coordsApproximate,
-      incident_type: a.incident_type,
-      severity: a.severity,
+      incident_type: result.analysis.incident_type,
+      severity: result.analysis.severity,
       status: "Open",
-      description: (body.description ?? "").trim() || a.summary,
-      summary: a.summary,
-      confidence: a.confidence,
-      risk_factors: a.risk_factors,
-      immediate_actions: a.immediate_actions,
-      avoid: a.avoid,
-      recommended_response: a.recommended_response,
-      requires_urgent_attention: a.requires_urgent_attention,
-      severity_reasons: a.severity_reasons,
-      needs_verification: a.needs_verification,
-      verification_note: a.verification_note,
-      origin: body.aiAvailable ? "ai" : "manual",
-      sources: body.sources ?? [],
-      evidence: body.evidence ?? [],
-      pipeline: { totalMs: body.pipeline?.totalMs ?? 0, ...body.pipeline, saved_at: now },
+      description: description || result.analysis.summary,
+      summary: result.analysis.summary,
+      confidence: result.analysis.confidence,
+      risk_factors: result.analysis.risk_factors,
+      immediate_actions: result.analysis.immediate_actions,
+      avoid: result.analysis.avoid,
+      recommended_response: result.analysis.recommended_response,
+      requires_urgent_attention: result.analysis.requires_urgent_attention,
+      severity_reasons: result.analysis.severity_reasons,
+      needs_verification: result.analysis.needs_verification,
+      verification_note: result.analysis.verification_note,
+      origin: result.aiAvailable ? "ai" : "manual",
+      sources: result.sources.map((s) => ({ title: s.title, doc: s.doc })),
+      evidence: result.evidence,
+      pipeline: { ...result.timings, saved_at: now },
       status_history: [{ status: "Open", at: now }],
-      verification: body.verification ?? "needs_review",
-      verification_reasons: body.verification_reasons ?? [],
-      publication: body.publication ?? "review_only",
+      verification: result.verification.status,
+      verification_reasons: result.verification.reasons,
+      publication: result.verification.publication,
       reporter_label: "Community report",
       reporter_id: user.id,
-      last_confirmed_at: now,
+      reporter_details: details,
       confirmations_yes: 0,
       confirmations_no: 0,
+      ...(photoUrl ? { photo_url: photoUrl } : {}),
+      ...(clientId ? { client_id: clientId } : {}),
     });
 
-    // Duplicate/related detection against existing active incidents.
     const related = findRelated(
       { incident_type: incident.incident_type, lat: incident.lat, lng: incident.lng, created_at: incident.created_at },
       await listIncidents(),
       { excludeId: incident.id },
     );
-
-    // Optionally link the new report into a corroborated group.
-    if (related.length > 0) {
-      incident.related_ids = related.map((r) => r.incident.id);
-    }
+    if (related.length > 0) incident.related_ids = related.map((r) => r.incident.id);
 
     const firstComment = await listComments(incident.id);
     return NextResponse.json(

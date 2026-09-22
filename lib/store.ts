@@ -41,7 +41,7 @@ function migrate(raw: Incident[]): Incident[] {
     verification_reasons: i.verification_reasons ?? [],
     publication: i.publication ?? (i.needs_verification ? "review_only" : "public"),
     reporter_label: i.reporter_label ?? (i.origin === "seed" ? "Demo dataset" : "Community report"),
-    last_confirmed_at: i.last_confirmed_at ?? i.created_at,
+    ...(i.last_confirmed_at ? { last_confirmed_at: i.last_confirmed_at } : {}),
     confirmations_yes: i.confirmations_yes ?? 0,
     confirmations_no: i.confirmations_no ?? 0,
     status_history: i.status_history ?? [{ status: i.status, at: i.created_at }],
@@ -68,7 +68,7 @@ async function load(): Promise<Incident[]> {
   } catch {
     /* first boot — seed below */
   }
-  cache = seedIncidents();
+  cache = seedFn();
   try {
     await fs.writeFile(DATA_PATH, JSON.stringify(cache, null, 2));
     cacheMtimeMs = (await fs.stat(DATA_PATH)).mtimeMs;
@@ -222,14 +222,11 @@ export async function confirmIncident(
         const cur = list[idx];
         const yesCount = counts ? counts.yes : (cur.confirmations_yes ?? 0) + (stillPresent ? 1 : 0);
         const noCount = counts ? counts.no : (cur.confirmations_no ?? 0) + (stillPresent ? 0 : 1);
-        const resolve = !stillPresent && noCount > yesCount + 1 && cur.status === "Open";
         const updated: Incident = {
           ...cur,
-          last_confirmed_at: stillPresent ? now : cur.last_confirmed_at,
+          ...(stillPresent ? { last_confirmed_at: now } : {}),
           confirmations_yes: yesCount,
           confirmations_no: noCount,
-          status: resolve ? "Resolved" : cur.status,
-          status_history: resolve ? [...(cur.status_history ?? []), { status: "Resolved" as const, at: now }] : cur.status_history,
         };
         const next = [...list];
         next[idx] = updated;
@@ -246,16 +243,9 @@ export async function confirmIncident(
   const noCount = counts ? counts.no : (cur.confirmations_no ?? 0) + (stillPresent ? 0 : 1);
   const updated: Incident = {
     ...cur,
-    last_confirmed_at: stillPresent ? now : cur.last_confirmed_at,
+    ...(stillPresent ? { last_confirmed_at: now } : {}),
     confirmations_yes: yesCount,
     confirmations_no: noCount,
-    // Majority of "cleared" responses auto-resolve the public alert.
-    status:
-      !stillPresent && noCount > (yesCount + 1) && cur.status === "Open" ? "Resolved" : cur.status,
-    status_history:
-      !stillPresent && noCount > (yesCount + 1) && cur.status === "Open"
-        ? [...(cur.status_history ?? []), { status: "Resolved" as const, at: now }]
-        : cur.status_history,
   };
   const next = [...list];
   next[idx] = updated;

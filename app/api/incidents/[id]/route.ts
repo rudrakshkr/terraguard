@@ -16,12 +16,8 @@ export const runtime = "nodejs";
 // Never cache: incidents and community data must be live across all clients.
 export const dynamic = "force-dynamic";
 
-/** Per-request caches for author profile lookups (public fields only). */
-const userIdNameCache = new Map<string, string>();
-const avatarCache = new Map<string, string | null>();
-
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
   try {
@@ -31,38 +27,27 @@ export async function GET(
       return NextResponse.json({ error: "Incident not found." }, { status: 404 });
     }
 
-    // Comments are public observations, shown to everyone on the detail page.
-    // Phone numbers/private info never enter comment records, and authors are
-    // resolved from live profiles (name + avatar) — never from raw user rows.
-    const rawComments = await listComments(id);
+    const user = await userFromRequest(req);
+    const publicIncident = incident.publication === "public" && incident.verification === "verified";
+    if (!publicIncident && !user) {
+      return NextResponse.json({ error: "Incident not found." }, { status: 404 });
+    }
 
-    // Resolve author profiles for this incident's comments (public fields only)
-    // BEFORE annotating, so every comment carries fresh profile data.
+    const rawComments = await listComments(id);
+    const nameCache = new Map<string, string>();
+    const avatarCache = new Map<string, string | null>();
     const authorIds = [...new Set(rawComments.map((c) => c.user_id))];
     for (const uid of authorIds) {
-      if (userIdNameCache.has(uid) && avatarCache.has(uid)) continue;
       const u = await getUserById(uid);
-      if (u) {
-        userIdNameCache.set(uid, u.display_name || "HillSense user");
-        avatarCache.set(uid, u.avatar_url ?? null);
-      } else {
-        userIdNameCache.set(uid, "");
-        avatarCache.set(uid, null);
-      }
+      nameCache.set(uid, u?.display_name || "HillSense user");
+      avatarCache.set(uid, u?.avatar_url ?? null);
     }
-    const comments = withAuthorProfiles(rawComments, (uid) => {
-      const u = userIdNameCache.get(uid);
-      if (u === undefined) return null; // unknown/removed user
-      return { display_name: u, avatar_url: avatarCache.get(uid) ?? null };
-    });
+    const comments = withAuthorProfiles(rawComments, (uid) => ({
+      display_name: nameCache.get(uid) ?? "HillSense user",
+      avatar_url: avatarCache.get(uid) ?? null,
+    }));
 
-    // If the caller is authenticated, tell them whether they already responded
-    // so the UI can show the completed state after a refresh.
-    const user = await userFromRequest(_req);
     const mine = user ? await hasConfirmed(id, user.id) : null;
-
-    // The latest ACTUAL community response time, from the per-user records
-    // (not the reporter's own timestamp). Null when nobody has responded yet.
     const lastCommunityAt = await latestConfirmationAt(id);
 
     return NextResponse.json({
@@ -165,7 +150,11 @@ export async function POST(
       if (!result.ok) {
         return NextResponse.json({ error: result.error }, { status: 400 });
       }
-      return NextResponse.json({ comment: result.comment }, { status: 201 });
+      const comment = withAuthorProfiles([result.comment], () => ({
+        display_name: user.display_name || "HillSense user",
+        avatar_url: user.avatar_url ?? null,
+      }))[0];
+      return NextResponse.json({ comment }, { status: 201 });
     }
 
     return NextResponse.json({ error: "Unknown action." }, { status: 400 });
@@ -185,6 +174,10 @@ export async function PATCH(
   ctx: { params: Promise<{ id: string }> },
 ) {
   try {
+    const user = await userFromRequest(req);
+    if (!user) {
+      return NextResponse.json({ error: "Sign in required to update incident status." }, { status: 401 });
+    }
     const { id } = await ctx.params;
     const body = (await req.json()) as { status?: string; new_status?: string };
     const next = body.status ?? body.new_status;

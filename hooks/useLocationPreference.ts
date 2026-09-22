@@ -31,6 +31,15 @@ export interface GeoLocation {
 
 const KEY = "hillsense-location";
 
+function isBroadAddressLabel(label?: string, address?: ResolvedAddress | null): boolean {
+  const specific = [
+    address?.locality, address?.city, address?.district, address?.pincode,
+  ].filter((v) => typeof v === "string" && v.trim()).length;
+  if (specific > 0) return false;
+  const value = (label ?? address?.full_address ?? "").trim();
+  return value.length > 0 && !/[0-9]/.test(value) && value.split(",").length <= 2;
+}
+
 /** Optional quick picks — clearly manual choices, never a geolocation fallback. */
 export const PRESETS = [
   { name: "Shimla", lat: 31.1048, lng: 77.1734 },
@@ -105,27 +114,6 @@ function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): nu
 }
 
 /**
- * Nearest known place to raw coordinates, for words-first labels.
- *
- * Used while the address is being resolved and when the geocoder is
- * unreachable: "near Manali (≈32 km away)" beats "30.90678, 75.86120" every
- * time. Null when the fix is far outside the served region (the caller then
- * shows a neutral "Locating your address…" line instead of a wrong place).
- */
-function nearestPlaceLabel(lat: number, lng: number): string | null {
-  let best: { name: string; km: number } | null = null;
-  for (const p of PRESETS) {
-    const km = haversineKm(lat, lng, p.lat, p.lng);
-    if (!best || km < best.km) best = { name: p.name, km };
-  }
-  if (!best) return null;
-  const km = Math.round(best.km);
-  if (best.km <= 25) return best.name;
-  if (best.km <= 400) return `near ${best.name} (≈${km} km away)`;
-  return null; // outside the region — don't guess
-}
-
-/**
  * Real geolocation + reverse geocoding.
  *
  * `useMyLocation` NEVER snaps to a preset town. It:
@@ -146,7 +134,16 @@ export function useLocationPreference() {
     const t = setTimeout(() => {
       try {
         const raw = localStorage.getItem(KEY);
-        if (raw) setLoc(JSON.parse(raw) as GeoLocation);
+        if (!raw) return;
+        const saved = JSON.parse(raw) as GeoLocation;
+        // Discard old/broad GPS labels such as "Punjab, India" so a stale
+        // value from an earlier version cannot masquerade as the user's current
+        // location. The next location lookup will resolve the real address.
+        if (saved.source === "gps" && isBroadAddressLabel(saved.label, saved.address)) {
+          localStorage.removeItem(KEY);
+          return;
+        }
+        setLoc(saved);
       } catch {
         /* ignore */
       }
@@ -194,6 +191,9 @@ export function useLocationPreference() {
       if (!res.ok) return null;
       const data = (await res.json()) as ResolvedAddress & { error?: string };
       if (!data.full_address || (data.error && !data.full_address)) return null;
+      // State/country-only strings are not useful for a current-location UI.
+      // Prefer a manual selection rather than persisting an overly broad label.
+      if (isBroadAddressLabel(data.full_address, data)) return null;
       return data;
     } catch {
       return null;
@@ -271,15 +271,14 @@ export function useLocationPreference() {
       }
 
       const { latitude, longitude, accuracy } = pos.coords;
-      // Words-first policy: a raw coordinate dump ("30.90678, 75.86120 · ±1031
-      // km") tells a person nothing. While the fix is unprocessed show the
-      // nearest known place from the typed/manual vocabulary instead of
-      // coordinates; the precise address then replaces it once resolved.
-      const nearest = nearestPlaceLabel(latitude, longitude);
+      // Never guess a place name from the nearest Himachal preset. That can
+      // mislabel a device that is actually in Punjab or another state. Keep the
+      // real GPS coordinates and show a neutral temporary label until reverse
+      // geocoding supplies a human-readable address.
       persist({
         lat: latitude,
         lng: longitude,
-        label: nearest ?? "Locating your address…",
+        label: "Location detected — resolving address…",
         preset: null,
         approximate: true,
         accuracy,
@@ -302,15 +301,15 @@ export function useLocationPreference() {
           address,
           source: "gps",
         });
-      } else if (nearest) {
-        // Geocoder unreachable — keep the honest words-based label instead of
-        // degrading to a coordinate dump.
+      } else {
+        // Geocoder unreachable — keep the coordinates internally but do not
+        // invent a city/state from the nearest preset.
         patch((cur) =>
-          cur.source === "gps" && cur.address == null ? { ...cur, label: nearest } : cur,
+          cur.source === "gps" && cur.address == null
+            ? { ...cur, label: "Location detected — address unavailable" }
+            : cur,
         );
       }
-      // Otherwise: keep the current words-based label ("Locating your address…"
-      // or the nearest-place line) — never fall back to raw coordinates.
     };
 
     void run();

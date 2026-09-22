@@ -1,92 +1,292 @@
 import { NextRequest, NextResponse } from "next/server";
 import { userFromRequest, updateUser, publicUser } from "@/lib/auth";
+import { deleteAvatarByUrl } from "@/lib/avatar-store";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+interface ProfileLocation {
+  full_address?: string;
+  locality?: string;
+  city?: string;
+  district?: string;
+  state?: string;
+  pincode?: string;
+  lat?: number;
+  lng?: number;
+  approximate?: boolean;
+}
 
 interface ProfileBody {
-  display_name?: string;
-  email?: string;
-  avatar_url?: string | null; // public URL from the upload endpoint; null removes
-  location?: {
-    full_address?: string;
-    locality?: string;
-    city?: string;
-    district?: string;
-    state?: string;
-    pincode?: string;
-    lat?: number;
-    lng?: number;
-    approximate?: boolean;
+  display_name?: unknown;
+  email?: unknown;
+  avatar_url?: unknown;
+  location?: unknown;
+}
+
+function cleanString(value: unknown, maxLength: number): string {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function validEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function sanitizeLocation(value: unknown): ProfileLocation | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const l = value as Record<string, unknown>;
+
+  const lat =
+    typeof l.lat === "number" && Number.isFinite(l.lat) && Math.abs(l.lat) <= 90
+      ? l.lat
+      : undefined;
+
+  const lng =
+    typeof l.lng === "number" && Number.isFinite(l.lng) && Math.abs(l.lng) <= 180
+      ? l.lng
+      : undefined;
+
+  const pincodeRaw = cleanString(l.pincode, 10);
+  const pincode = pincodeRaw.replace(/\D/g, "").slice(0, 6);
+
+  return {
+    full_address: cleanString(l.full_address, 300) || undefined,
+    locality: cleanString(l.locality, 100) || undefined,
+    city: cleanString(l.city, 100) || undefined,
+    district: cleanString(l.district, 100) || undefined,
+    state: cleanString(l.state, 100) || undefined,
+    pincode: pincode || undefined,
+    lat,
+    lng,
+    approximate: l.approximate === true,
+  };
+}
+
+function validateAvatarUrl(value: unknown): {
+  provided: boolean;
+  value?: string | null;
+  error?: string;
+} {
+  if (!Object.prototype.hasOwnProperty.call(value ?? {}, "__dummy")) {
+    // no-op; keeps function isolated from caller semantics
+  }
+
+  if (value === undefined) {
+    return { provided: false };
+  }
+
+  if (value === null) {
+    return { provided: true, value: null };
+  }
+
+  if (typeof value !== "string") {
+    return {
+      provided: true,
+      error: "Invalid photo reference.",
+    };
+  }
+
+  const v = value.trim().slice(0, 500);
+
+  if (!v) {
+    return {
+      provided: true,
+      value: null,
+    };
+  }
+
+  // Local/file-mode avatar endpoint.
+  if (v.startsWith("/api/uploads/av_")) {
+    return {
+      provided: true,
+      value: v,
+    };
+  }
+
+  // Vercel Blob public URL.
+  if (v.startsWith("https://")) {
+    try {
+      const host = new URL(v).hostname.toLowerCase();
+
+      const validBlobHost =
+        host === "blob.vercel-storage.com" ||
+        host.endsWith(".blob.vercel-storage.com");
+
+      const validAvatarPath =
+        v.includes("/hillsense/avatars/");
+
+      if (validBlobHost && validAvatarPath) {
+        return {
+          provided: true,
+          value: v,
+        };
+      }
+    } catch {
+      // handled below
+    }
+  }
+
+  return {
+    provided: true,
+    error: "Invalid photo reference.",
   };
 }
 
 export async function POST(req: NextRequest) {
   try {
     const user = await userFromRequest(req);
+
     if (!user) {
-      return NextResponse.json({ error: "Please sign in first." }, { status: 401 });
+      return NextResponse.json(
+        { error: "Your session is invalid or has expired. Please sign in again." },
+        { status: 401 },
+      );
     }
-    const body = (await req.json()) as ProfileBody;
 
-    const name = (body.display_name ?? "").trim().slice(0, 60);
+    let body: ProfileBody;
+
+    try {
+      body = (await req.json()) as ProfileBody;
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid request body." },
+        { status: 400 },
+      );
+    }
+
+    /*
+     * -------------------------
+     * Name
+     * -------------------------
+     */
+    const hasName = Object.prototype.hasOwnProperty.call(body, "display_name");
+
+    const name = hasName
+      ? cleanString(body.display_name, 60)
+      : user.display_name;
+
     if (!name) {
-      return NextResponse.json({ error: "Please enter your name." }, { status: 400 });
+      return NextResponse.json(
+        { error: "Please enter your name." },
+        { status: 400 },
+      );
     }
 
-    const email = (body.email ?? "").trim().slice(0, 120);
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return NextResponse.json({ error: "That email address doesn't look valid." }, { status: 400 });
+    /*
+     * -------------------------
+     * Email
+     * -------------------------
+     */
+    const hasEmail = Object.prototype.hasOwnProperty.call(body, "email");
+
+    const email = hasEmail
+      ? cleanString(body.email, 120)
+      : user.email ?? "";
+
+    if (hasEmail && email && !validEmail(email)) {
+      return NextResponse.json(
+        { error: "That email address doesn't look valid." },
+        { status: 400 },
+      );
     }
 
-    // Location is optional but, when given, coordinates must be numbers in a
-    // plausible range and the full address bounded.
-    let location: ProfileBody["location"];
-    if (body.location && typeof body.location === "object") {
-      const l = body.location;
-      const lat = typeof l.lat === "number" && Math.abs(l.lat) <= 90 ? l.lat : undefined;
-      const lng = typeof l.lng === "number" && Math.abs(l.lng) <= 180 ? l.lng : undefined;
-      location = {
-        full_address: (l.full_address ?? "").toString().slice(0, 300) || undefined,
-        locality: (l.locality ?? "").toString().slice(0, 100) || undefined,
-        city: (l.city ?? "").toString().slice(0, 100) || undefined,
-        district: (l.district ?? "").toString().slice(0, 100) || undefined,
-        state: (l.state ?? "").toString().slice(0, 100) || undefined,
-        pincode: (l.pincode ?? "").toString().replace(/\D/g, "").slice(0, 6) || undefined,
-        lat,
-        lng,
-        approximate: l.approximate === true,
-      };
-    }
+    /*
+     * -------------------------
+     * Location
+     * -------------------------
+     */
+    const hasLocation = Object.prototype.hasOwnProperty.call(body, "location");
 
-    // avatar_url must be either null (remove photo) or one of our own upload URLs
-    // (our serving route in file mode, or the configured blob CDN in blob mode).
-    let avatarUrl: string | null | undefined;
-    if (body.avatar_url === null) {
-      avatarUrl = null;
-    } else if (typeof body.avatar_url === "string") {
-      const v = body.avatar_url.trim().slice(0, 500);
-      const isOwnUrl =
-        v.startsWith("/api/uploads/") ||
-        (v.startsWith("https://") && (v.includes("blob.vercel-storage.com") || v.includes("/hillsense/avatars/")));
-      if (v && !isOwnUrl) {
-        return NextResponse.json({ error: "Invalid photo reference." }, { status: 400 });
+    let location: ProfileLocation | undefined;
+
+    if (hasLocation) {
+      location = sanitizeLocation(body.location);
+
+      if (body.location !== null && location === undefined) {
+        return NextResponse.json(
+          { error: "Invalid location data." },
+          { status: 400 },
+        );
       }
-      avatarUrl = v || undefined;
     }
 
+    /*
+     * -------------------------
+     * Avatar
+     * -------------------------
+     */
+    const avatarResult = validateAvatarUrl(body.avatar_url);
+
+    if (avatarResult.error) {
+      return NextResponse.json(
+        { error: avatarResult.error },
+        { status: 400 },
+      );
+    }
+
+    const hasAvatar = avatarResult.provided;
+    const nextAvatarUrl = hasAvatar
+      ? avatarResult.value
+      : user.avatar_url;
+
+    /*
+     * -------------------------
+     * Persist
+     * -------------------------
+     */
     const updated = await updateUser(user.id, {
       display_name: name,
-      ...(email ? { email } : {}),
-      ...(avatarUrl !== undefined ? { avatar_url: avatarUrl ?? undefined } : {}),
-      location,
+      ...(hasEmail
+        ? {
+            email: email || undefined,
+          }
+        : {}),
+      ...(hasAvatar
+        ? {
+            avatar_url: nextAvatarUrl ?? undefined,
+          }
+        : {}),
+      ...(hasLocation
+        ? {
+            location,
+          }
+        : {}),
       onboarded: true,
     });
+
     if (!updated) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
+      return NextResponse.json(
+        { error: "User account could not be found." },
+        { status: 404 },
+      );
     }
-    return NextResponse.json({ user: publicUser(updated) });
-  } catch (err) {
-    console.error("[auth/profile]", err);
-    return NextResponse.json({ error: "Could not save your profile." }, { status: 500 });
+
+    /*
+     * Delete old avatar only after the new user record was successfully saved.
+     */
+    if (
+      hasAvatar &&
+      user.avatar_url &&
+      user.avatar_url !== (nextAvatarUrl ?? null)
+    ) {
+      await deleteAvatarByUrl(user.avatar_url);
+    }
+
+    return NextResponse.json({
+      user: publicUser(updated),
+      saved: true,
+    });
+  } catch (error) {
+    console.error("[api/auth/profile]", error);
+
+    return NextResponse.json(
+      {
+        error: "Could not save your profile. Please try again.",
+      },
+      { status: 500 },
+    );
   }
 }

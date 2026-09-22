@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { MapPin, Clock, Radio, ShieldCheck, Phone, Navigation, Siren, MessageSquare } from "lucide-react";
 import type { Incident } from "@/lib/types";
-import { useAuth, authFetch } from "@/hooks/useAuth";
+import { useAuth } from "@/hooks/useAuth";
 import { haversineKm, fmtDistance, fmtAge, freshnessOf, minutesSince } from "@/lib/geo";
 import { exampleReportLabel, activityLabel } from "@/lib/labels";
 import { Spinner } from "@/components/Spinner";
@@ -40,10 +40,26 @@ export default function HomePage() {
         /* ignore */
       }
 
-      authFetch("/api/incidents?public=1", { cache: "no-store" })
-        .then((r) => r.json())
-        .then((d) => setIncidents(d.incidents ?? []))
-        .catch(() => setIncidents([]));
+      fetch("/api/incidents?public=1", { cache: "no-store" })
+        .then(async (r) => {
+          if (!r.ok) throw new Error("load failed");
+          const d = await r.json();
+          const list = (d.incidents ?? []) as Incident[];
+          setIncidents(list);
+          try {
+            const { putCachedList } = await import("@/lib/offline-db");
+            await putCachedList(list);
+          } catch { /* best-effort */ }
+        })
+        .catch(async () => {
+          try {
+            const { getCachedList } = await import("@/lib/offline-db");
+            const cached = await getCachedList();
+            setIncidents((cached?.incidents ?? []) as Incident[]);
+          } catch {
+            setIncidents([]);
+          }
+        });
     }, 0);
     return () => clearTimeout(t);
   }, []);

@@ -119,7 +119,14 @@ export default function OfflineIndicator() {
       {online && !sync.syncing && sync.pending === 0 && sync.failed > 0 && (
         <>
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          <span>{sync.failed} change{sync.failed === 1 ? "" : "s"} could not sync — they are kept and can be retried.</span>
+          <span>{sync.failed} change{sync.failed === 1 ? "" : "s"} could not sync — they are kept.</span>
+          <button
+            type="button"
+            className="underline underline-offset-2"
+            onClick={() => import("@/lib/sync").then(({ retryFailed }) => retryFailed())}
+          >
+            Retry
+          </button>
         </>
       )}
       {online && !sync.syncing && sync.pending === 0 && sync.failed === 0 && (

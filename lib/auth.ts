@@ -29,9 +29,7 @@ const DATA_PATH = `${dataDir}/.hillsense-auth.json`.replace("//", "/");
 const KV_KEY = "hillsense:auth:v1";
 
 /** Dev mode: no SMS provider configured → codes are returned to the client for demo. */
-export const DEV_MODE =
-  process.env.AUTH_DEV_MODE === "1" ||
-  (!process.env.SMS_PROVIDER_API_URL && !process.env.SMS_PROVIDER_API_KEY);
+export const DEV_MODE = process.env.AUTH_DEV_MODE === "1";
 
 const OTP_TTL_MS = 5 * 60_000; // 5 minutes
 const OTP_MAX_ATTEMPTS = 5;
@@ -53,7 +51,7 @@ export interface UserRecord {
   phone: string; // digits only, never exposed via API
   display_name: string;
   email?: string;
-  avatar_url?: string; // public URL of the profile photo (blob storage)
+  avatar_url?: string | null; // public URL of the profile photo (blob storage)
   onboarded: boolean;
   created_at: string;
   location?: {
@@ -205,6 +203,9 @@ export async function sendOtp(
       return { ok: false, error: "Could not send the SMS right now. Please try again in a moment." };
     }
   } else {
+    if (!DEV_MODE) {
+      return { ok: false, error: "SMS authentication is not configured. Set an SMS provider or enable AUTH_DEV_MODE only for local demos." };
+    }
     console.log(`[auth] DEV MODE OTP for ${maskPhone(phone)}: ${code}`);
   }
 

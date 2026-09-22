@@ -22,10 +22,37 @@ function readToken(): string | null {
   }
 }
 
+function readCachedUser(): AuthUser | null {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<AuthUser>;
+    if (!parsed || typeof parsed.id !== "string" || typeof parsed.display_name !== "string") return null;
+    return {
+      id: parsed.id,
+      display_name: parsed.display_name,
+      initials: typeof parsed.initials === "string" ? parsed.initials : "H",
+      ...(typeof parsed.avatar_url === "string" ? { avatar_url: parsed.avatar_url } : {}),
+      onboarded: parsed.onboarded === true,
+      has_location: parsed.has_location === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Shared session store with a simple subscription so all components stay in sync. */
 let cachedUser: AuthUser | null = null;
 let cachedToken: string | null = null;
 let loaded = false;
+
+// Hydrate from localStorage immediately when possible. This is what allows an
+// already-authenticated user to keep using the offline queue after a full page
+// refresh. The server still remains the source of truth whenever connectivity
+// returns.
+cachedToken = readToken();
+cachedUser = cachedToken ? readCachedUser() : null;
+loaded = Boolean(cachedUser);
 const listeners = new Set<() => void>();
 
 function notify() {
@@ -64,13 +91,21 @@ async function refreshFromServer(): Promise<void> {
       const data = (await res.json()) as { user: AuthUser };
       cachedUser = data.user;
       cachedToken = token;
+      try {
+        localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+      } catch {
+        /* private mode */
+      }
     } else {
       setSession(null, null);
       loaded = true;
       return;
     }
   } catch {
-    cachedUser = null; // network problem — treat as signed out but keep token
+    // Offline/network failure is not the same as a signed-out session. Keep
+    // the locally cached session so offline reports/comments/confirmations can
+    // still be created and queued. A later successful refresh validates it.
+    cachedToken = token;
   }
   loaded = true;
   notify();

@@ -104,6 +104,7 @@ export default function ReportPage() {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const saveClientIdRef = useRef<string | null>(null);
 
   /* ------------------------ new structured form fields ------------------------ */
   const [hazardType, setHazardType] = useState<IncidentType | "">("");
@@ -189,7 +190,7 @@ export default function ReportPage() {
           observed_severity: observedSeverity || undefined,
           observations: observations.trim() || undefined,
         },
-        location_text: loc?.label || customPlace.trim() || undefined,
+        location_text: loc?.address?.full_address || loc?.label || customPlace.trim() || undefined,
         lat: loc && Number.isFinite(loc.lat) ? loc.lat : undefined,
         lng: loc && Number.isFinite(loc.lng) ? loc.lng : undefined,
         coords_approximate: loc ? loc.approximate : true,
@@ -274,36 +275,50 @@ export default function ReportPage() {
     setSaving(true);
     setError(null);
     try {
+      const locValid = Boolean(loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lng));
+      if (!locValid) {
+        throw new Error("Please choose your location or a known place before publishing the report.");
+      }
+
+      const clientId = saveClientIdRef.current ?? (() => {
+        const id = typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `save_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+        saveClientIdRef.current = id;
+        return id;
+      })();
+
+      const preparedImage = image ? await prepareImage(image) : null;
+      const imageData = preparedImage ? await fileToDataUrl(preparedImage) : undefined;
+      const locationText = loc?.address?.full_address || loc?.label || customPlace.trim();
+      const reporterDetails = {
+        hazard_type: hazardType || undefined,
+        when: whenHappened || undefined,
+        when_exact: whenHappened === "exact" && whenExact ? whenExact : undefined,
+        happening_now: happeningNow || undefined,
+        affected: [...affected, ...(affectedOther.trim() ? [affectedOther.trim()] : [])],
+        casualties: casualties || undefined,
+        observed_severity: observedSeverity || undefined,
+        observations: observations.trim() || undefined,
+      };
+
       const res = await authFetch("/api/incidents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          location: loc?.label ?? "Unnamed location",
-          lat: Number.isFinite(loc?.lat) ? loc?.lat : undefined,
-          lng: Number.isFinite(loc?.lng) ? loc?.lng : undefined,
+          client_id: clientId,
+          location: locationText,
+          lat: loc?.lat,
+          lng: loc?.lng,
           coords_approximate: loc?.approximate ?? true,
-          description,
-          reporter_details: {
-            hazard_type: hazardType || undefined,
-            when: whenHappened || undefined,
-            when_exact: whenHappened === "exact" && whenExact ? whenExact : undefined,
-            happening_now: happeningNow || undefined,
-            affected: [...affected, ...(affectedOther.trim() ? [affectedOther.trim()] : [])],
-            casualties: casualties || undefined,
-            observed_severity: observedSeverity || undefined,
-            observations: observations.trim() || undefined,
-          },
-          analysis: result.analysis,
-          aiAvailable: result.aiAvailable,
-          sources: result.sources.map((s) => ({ title: s.title, doc: s.doc })),
-          evidence: result.evidence,
-          pipeline: result.timings,
-          verification: result.verification.status,
-          verification_reasons: result.verification.reasons,
-          publication: result.verification.publication,
+          description: description.trim(),
+          reporter_details: reporterDetails,
+          image: imageData
+            ? { name: preparedImage?.name, type: preparedImage?.type, data: imageData }
+            : null,
         }),
       });
-      const data = (await res.json()) as { incident?: { id: string }; error?: string };
+      const data = (await res.json()) as { incident?: { id: string; verification?: string }; error?: string; replayed?: boolean };
       if (res.status === 401) {
         setError("Your session expired. Please sign in again to publish this report.");
         setSaving(false);

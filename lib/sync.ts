@@ -116,6 +116,19 @@ export async function syncOutbox(): Promise<void> {
         if (res.ok || res.status === 409) {
           // 409 = already exists → the idempotent outcome; treat as synced.
           await deleteOutboxItem(item.id);
+          try {
+            window.dispatchEvent(
+              new CustomEvent("hillsense:data-updated", {
+                detail: {
+                  kind: item.kind,
+                  incidentId: item.incident_id,
+                  user: item.kind === "profile" ? (data.user ?? undefined) : undefined,
+                },
+              }),
+            );
+          } catch {
+            /* browser event is best-effort */
+          }
         } else if (res.status === 401) {
           // Session expired — keep for retry after the user signs in again.
           await updateOutboxItem({

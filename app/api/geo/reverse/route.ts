@@ -119,7 +119,9 @@ const clean = (s?: string) => {
  * with no repeated parts and no raw coordinates.
  */
 function composeAddress(a: NominatimAddress): string {
-  const street = clean(a.road) ?? clean(a.pedestrian);
+  const road = clean(a.road) ?? clean(a.pedestrian);
+  const house = clean(a.house_number);
+  const street = house && road ? `${house} ${road}` : road ?? house;
   const area = clean(a.neighbourhood) ?? clean(a.suburb) ?? clean(a.city_district);
   const town =
     clean(a.village) ?? clean(a.town) ?? clean(a.city) ?? clean(a.hamlet) ?? clean(a.municipality);
@@ -216,10 +218,15 @@ export async function GET(req: NextRequest) {
     // Compose the best available address from the returned parts; if the
     // service returned nothing usable, fall back to its display name.
     const composed = composeAddress(a);
-    const full =
-      composed ||
-      clean(data.display_name) ||
-      "";
+    const specificParts = [
+      a.house_number, a.road, a.pedestrian, a.neighbourhood, a.suburb,
+      a.city_district, a.village, a.town, a.city, a.hamlet, a.municipality,
+      a.county, a.state_district, a.postcode,
+    ].filter((v) => clean(v)).length;
+    // Never return a misleading state/country-only address such as
+    // "Punjab, India" for a device fix. When Nominatim is too sparse, the
+    // client keeps its coordinates and asks the user to verify manually.
+    const full = specificParts > 0 ? composed || clean(data.display_name) || "" : "";
 
     const payload = {
       full_address: full,

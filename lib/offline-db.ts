@@ -15,7 +15,7 @@
  */
 
 const DB_NAME = "hillsense-offline";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const INCIDENTS = "incidents";
 const OUTBOX = "outbox";
 
@@ -27,8 +27,10 @@ export interface CachedList {
 
 export interface CachedDetail {
   id: string;
+  user_id?: string;
   incident: unknown;
   comments: unknown[];
+  my_confirmation?: { response: "yes" | "no"; at: string } | null;
   fetched_at: string;
 }
 
@@ -106,13 +108,29 @@ export async function getCachedList(): Promise<CachedList | null> {
   return withStore<CachedList>(INCIDENTS, "readonly", (s) => s.get("public-list"));
 }
 
-export async function putCachedDetail(id: string, incident: unknown, comments: unknown[]): Promise<void> {
-  const rec: CachedDetail = { id, incident, comments, fetched_at: new Date().toISOString() };
-  await withStore<void>(INCIDENTS, "readwrite", (s) => s.put({ ...rec, key: `detail:${id}` }));
+export async function putCachedDetail(
+  id: string,
+  incident: unknown,
+  comments: unknown[],
+  userId?: string,
+  myConfirmation?: { response: "yes" | "no"; at: string } | null,
+): Promise<void> {
+  const rec: CachedDetail = {
+    id,
+    ...(userId ? { user_id: userId } : {}),
+    incident,
+    comments,
+    ...(myConfirmation !== undefined ? { my_confirmation: myConfirmation } : {}),
+    fetched_at: new Date().toISOString(),
+  };
+  const key = `detail:${userId ?? "public"}:${id}`;
+  await withStore<void>(INCIDENTS, "readwrite", (s) => s.put({ ...rec, key }));
 }
 
-export async function getCachedDetail(id: string): Promise<CachedDetail | null> {
-  return withStore<CachedDetail>(INCIDENTS, "readonly", (s) => s.get(`detail:${id}`));
+export async function getCachedDetail(id: string, userId?: string): Promise<CachedDetail | null> {
+  const key = `detail:${userId ?? "public"}:${id}`;
+  const current = await withStore<CachedDetail>(INCIDENTS, "readonly", (s) => s.get(key));
+  return current;
 }
 
 /* -------------------------------- outbox -------------------------------- */
@@ -144,7 +162,11 @@ export async function listOutbox(): Promise<OutboxItem[]> {
 }
 
 export async function listPendingOutbox(): Promise<OutboxItem[]> {
-  return (await listOutbox()).filter((i) => i.state === "pending" || i.state === "failed");
+  // Include stale "syncing" records left behind by a browser/tab crash. The
+  // sync engine has an in-process lock, so live syncing still cannot overlap.
+  return (await listOutbox()).filter(
+    (i) => i.state === "pending" || i.state === "syncing" || i.state === "failed",
+  );
 }
 
 export async function deleteOutboxItem(id: string): Promise<void> {

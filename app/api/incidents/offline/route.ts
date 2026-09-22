@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { userFromRequest, publicUser } from "@/lib/auth";
 import { addIncident, listIncidents } from "@/lib/store";
+import { LOCATIONS } from "@/lib/threat";
 import { findRelated } from "@/lib/geo";
 import { analyzeIncident } from "@/lib/hillsense";
 import { putReportPhoto } from "@/lib/avatar-store";
@@ -87,8 +88,17 @@ export async function POST(req: NextRequest) {
       photoUrl = result.url;
     }
 
-    const lat = Number.isFinite(body.lat) ? (body.lat as number) : undefined;
-    const lng = Number.isFinite(body.lng) ? (body.lng as number) : undefined;
+    const rawLat = Number.isFinite(body.lat) ? (body.lat as number) : undefined;
+    const rawLng = Number.isFinite(body.lng) ? (body.lng as number) : undefined;
+    const known = LOCATIONS.find((l) => l.name.toLowerCase() === (body.location_text ?? "").trim().toLowerCase());
+    const lat = rawLat ?? known?.lat;
+    const lng = rawLng ?? known?.lng;
+    if (lat === undefined || lng === undefined || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return NextResponse.json(
+        { error: "A map location is required before this offline report can sync. Reopen it when you can choose a location." },
+        { status: 400 },
+      );
+    }
 
     // ---- run the REAL pipeline server-side: classify → retrieve → ground → verify ----
     // The offline client never fakes this; "Pending AI verification" on the
@@ -108,9 +118,9 @@ export async function POST(req: NextRequest) {
     const incident = await addIncident({
       created_at: body.saved_at ?? now,
       location,
-      lat: lat ?? 31.9,
-      lng: lng ?? 77.1,
-      coords_approximate: body.coords_approximate ?? !(lat !== undefined && lng !== undefined),
+      lat,
+      lng,
+      coords_approximate: body.coords_approximate ?? !(rawLat !== undefined && rawLng !== undefined),
       incident_type: result.analysis.incident_type,
       severity: result.analysis.severity,
       status: "Open",
@@ -139,7 +149,6 @@ export async function POST(req: NextRequest) {
         ...(body.reporter_details ?? {}),
         hazard_type: hazardType,
       },
-      last_confirmed_at: now,
       confirmations_yes: 0,
       confirmations_no: 0,
       photo_url: photoUrl,

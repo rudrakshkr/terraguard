@@ -7,7 +7,7 @@ import {
   User as UserIcon, MapPin, Camera, Trash2, Check, Loader2, ShieldCheck,
   Phone, AlertTriangle, ArrowLeft, CalendarDays,
 } from "lucide-react";
-import { useAuth, authFetch } from "@/hooks/useAuth";
+import { useAuth, authFetch, type AuthUser } from "@/hooks/useAuth";
 import { Spinner } from "@/components/Spinner";
 
 interface FullProfile {
@@ -25,6 +25,8 @@ interface FullProfile {
     district?: string;
     state?: string;
     pincode?: string;
+    lat?: number;
+    lng?: number;
     approximate?: boolean;
   } | null;
   created_at: string;
@@ -77,30 +79,98 @@ export default function ProfilePage() {
           setEmail(data.profile.email ?? "");
           setLoadError(null);
         })
-        .catch((e: unknown) => setLoadError(e instanceof Error ? e.message : "Could not load your profile."))
+        .catch(async (e: unknown) => {
+          // Offline profile fallback: the cached auth user remains available
+          // even when /api/auth/me cannot be reached. Location is kept locally
+          // because it is also needed for offline-first nearby/report flows.
+          try {
+            let location: FullProfile["location"] = null;
+            const raw = localStorage.getItem("hillsense-location");
+            if (raw) {
+              const l = JSON.parse(raw) as {
+                label?: string; lat?: number; lng?: number; approximate?: boolean;
+                address?: { locality?: string; city?: string; district?: string; state?: string; pincode?: string; full_address?: string };
+              };
+              if (l && typeof l.label === "string") {
+                location = {
+                  full_address: l.address?.full_address ?? l.label,
+                  locality: l.address?.locality,
+                  city: l.address?.city,
+                  district: l.address?.district,
+                  state: l.address?.state,
+                  pincode: l.address?.pincode,
+                  lat: typeof l.lat === "number" ? l.lat : undefined,
+                  lng: typeof l.lng === "number" ? l.lng : undefined,
+                  approximate: l.approximate === true,
+                };
+              }
+            }
+            if (user) {
+              const fallbackProfile: FullProfile = {
+                id: user.id,
+                display_name: user.display_name || "HillSense user",
+                initials: user.initials || "H",
+                phone_masked: "••••••••••",
+                verified_phone: true,
+                email: "",
+                avatar_url: user.avatar_url ?? null,
+                location,
+                created_at: "",
+                onboarded: user.onboarded,
+              };
+              setProfile(fallbackProfile);
+              setName(fallbackProfile.display_name === "HillSense user" ? "" : fallbackProfile.display_name);
+              setEmail("");
+              setLoadError(null);
+              setNotice("Showing your saved profile while offline.");
+              return;
+            }
+          } catch {
+            /* fall through to the normal error state */
+          }
+          setLoadError(e instanceof Error ? e.message : "Could not load your profile.");
+        })
         .finally(() => setLoadingProfile(false));
     }, 0);
     return () => clearTimeout(t);
-  }, [authed]);
+  }, [authed, user]);
 
   async function save() {
     if (!profile) return;
     setSaving(true);
     setError(null);
     setNotice(null);
+    const payload = {
+      display_name: name.trim() || profile.display_name,
+      email: email.trim(),
+    };
     try {
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        const { enqueue, newOutboxId } = await import("@/lib/offline-db");
+        await enqueue({
+          id: newOutboxId(),
+          kind: "profile",
+          payload,
+          created_at: new Date().toISOString(),
+          state: "pending",
+          attempts: 0,
+        });
+        const localUser = user ? { ...user, display_name: payload.display_name } : null;
+        if (localUser) updateProfile(localUser);
+        setProfile((p) => (p ? { ...p, display_name: payload.display_name, email: payload.email } : p));
+        setNotice("Saved offline — your profile changes will sync when you're back online.");
+        return;
+      }
+
       const res = await authFetch("/api/auth/profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          display_name: name.trim() || profile.display_name,
-          email: email.trim(),
-        }),
+        body: JSON.stringify(payload),
       });
-      const data = (await res.json()) as { user?: typeof user; error?: string };
+      const data = (await res.json()) as { user?: AuthUser; error?: string };
       if (!res.ok || !data.user) throw new Error(data.error ?? "Could not save your profile.");
       if (data.user) updateProfile(data.user);
-      setProfile((p) => (p ? { ...p, display_name: data.user!.display_name } : p));
+      setProfile((p) => (p ? { ...p, display_name: data.user!.display_name, email: payload.email } : p));
       setNotice("Profile saved.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save your profile.");
@@ -121,6 +191,10 @@ export default function ProfilePage() {
       setError("That image is too large. Please choose one under 8 MB.");
       return;
     }
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setError("Profile photo changes need an internet connection. Your name and email can still be saved offline.");
+      return;
+    }
     setUploading(true);
     try {
       const prepared = await prepareImage(f);
@@ -135,7 +209,7 @@ export default function ProfilePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ display_name: name.trim() || profile?.display_name, email: email.trim(), avatar_url: data.url }),
       });
-      const saveData = (await saveRes.json()) as { user?: typeof user; error?: string };
+      const saveData = (await saveRes.json()) as { user?: AuthUser; error?: string };
       if (!saveRes.ok || !saveData.user) throw new Error(saveData.error ?? "Could not save the photo.");
       if (saveData.user) updateProfile(saveData.user);
       setProfile((p) => (p ? { ...p, avatar_url: data.url! } : p));
@@ -159,7 +233,7 @@ export default function ProfilePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ display_name: name.trim() || profile.display_name, email: email.trim(), avatar_url: null }),
       });
-      const data = (await res.json()) as { user?: typeof user; error?: string };
+      const data = (await res.json()) as { user?: AuthUser; error?: string };
       if (!res.ok || !data.user) throw new Error(data.error ?? "Could not remove the photo.");
       if (data.user) updateProfile(data.user);
       setProfile((p) => (p ? { ...p, avatar_url: null } : p));
@@ -199,7 +273,7 @@ export default function ProfilePage() {
         </span>
         <div>
           <h1 className="text-xl font-bold tracking-tight">Your profile</h1>
-          <p className="text-[12.5px] muted">Saved to your HillSense account — visible only to you.</p>
+          <p className="text-[12.5px] muted">Saved to your HillSense account — visible only to you. Profile changes can be queued while offline.</p>
         </div>
       </div>
 

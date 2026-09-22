@@ -171,8 +171,8 @@ para(tf, [("A community reporting platform where every public alert must survive
 pillars = [
     ("1 · REPORT", "Structured, geo-tagged reports with photos — hazard type, timing, severity, casualties.", GREEN),
     ("2 · VERIFY", "An AI evidence gate cross-checks image, text, location and nearby reports.", BLUE),
-    ("3 · ALERT", "Only VERIFIED incidents enter the public nearby feed and map, badged AI VERIFIED.", AMBER),
-    ("4 · SUSTAIN", "The community confirms “still present” or “cleared”; stale alerts auto-resolve.", GREEN),
+    ("3 · ALERT", "Only evidence-consistent incidents enter the public nearby feed and map, badged AI CHECK PASSED.", AMBER),
+    ("4 · SUSTAIN", "The community confirms “still present” or “cleared”; incident status stays tied to current community updates.", GREEN),
 ]
 x = 0.6
 for title, body, accent in pillars:
@@ -181,18 +181,18 @@ for title, body, accent in pillars:
 rect(s, 0.6, 5.75, 12.13, 0.85, GREEN_BG, radius=0.12)
 tf = textbox(s, 0.95, 5.98, 11.5, 0.45, anchor=MSO_ANCHOR.MIDDLE)
 para(tf, [("Publication rule:  ", 13.5, GREEN, True),
-          ("only VERIFIED becomes a public alert — NEEDS REVIEW is held in a queue, REJECTED is never published.",
+          ("only evidence-consistent reports are eligible for the public feed — NEEDS REVIEW is held for review, REJECTED is not published.",
            13.5, SLATE, False)], first=True, after=0)
 
 # ================================================================ 4 · HOW IT WORKS
 s = new_slide()
-header(s, "How it works", "From a report on the hillside to a live alert", 4)
+header(s, "How it works", "From a report on the hillside to a trusted incident update", 4)
 steps = [
     ("Report", "Text + photo + structured context, pinned to the reporter's actual GPS location."),
-    ("Verify", "9 evidence checks — vision LLM when configured, deterministic heuristics as fallback."),
-    ("Publish", "VERIFIED only. The rest stays out of the public feed, visibly."),
-    ("Confirm", "One vote per user: “still present” or “has cleared” — server-enforced."),
-    ("Resolve", "Enough clear-confirmations and the incident auto-resolves. No stale alerts."),
+    ("Verify", "Evidence checks compare image, text, location and related reports; human review handles ambiguity."),
+    ("Publish", "Evidence-consistent reports are eligible for the public feed; unclear reports stay under review."),
+    ("Confirm", "One response per user: “still present” or “has cleared” — server-enforced."),
+    ("Update status", "Community updates help keep the incident current and reduce stale information."),
 ]
 x, y, w, gap = 0.6, 2.35, 2.2, 0.28
 for i, (title, body) in enumerate(steps, 1):
@@ -233,7 +233,7 @@ for i, c in enumerate(checks):
     tf = textbox(s, 0.6 + col * 3.55, 2.5 + row * 0.62, 3.4, 0.55)
     para(tf, [(f"{i+1:02d}  ", 13, GREEN, True), (c, 13, SLATE, False)], first=True, after=0, line=1.05)
 outcomes = [
-    ("✓ VERIFIED", "Consistent, plausible evidence — published to the public feed, badged AI VERIFIED.", GREEN, GREEN_BG),
+    ("✓ VERIFIED", "Consistent available evidence — eligible for the public feed, badged AI CHECK PASSED.", GREEN, GREEN_BG),
     ("⚠ NEEDS REVIEW", "Evidence insufficient or ambiguous — held in a review queue, not published as fact.", AMBER, AMBER_BG),
     ("✕ REJECTED", "Contradicted or implausible — e.g. “highway buried” over an ordinary road photo. Never published.", RED, RED_BG),
 ]
@@ -245,8 +245,8 @@ for title, body, accent, bg in outcomes:
     para(tf, [(body, 12, SLATE, False)], line=1.08, after=0)
     y += 1.6
 tf = textbox(s, 7.75, 6.75, 4.98, 0.4)
-para(tf, [("Corroboration compounds:", 12.5, INK, True),
-          (" multiple nearby reports strengthen the verdict.", 12.5, SLATE, False)], first=True, after=0)
+para(tf, [("Corroboration matters:", 12.5, INK, True),
+          (" multiple nearby reports add independent evidence.", 12.5, SLATE, False)], first=True, after=0)
 
 # ================================================================ 6 · TRUST LAYER
 s = new_slide()
@@ -255,7 +255,7 @@ cards = [
     ("Phone + OTP sign-in", "No passwords anywhere — hashed one-time codes, expiring bearer sessions, real SMS provider ready.", BLUE),
     ("One confirm per user", "user + incident + response is enforced server-side; refreshing the page never unlocks a second vote.", GREEN),
     ("Private by default", "Comments show first names only. Phone numbers are never displayed or stored in public records.", BLUE),
-    ("Comments ≠ verified facts", "Community observations are visually distinct from the AI VERIFIED assessment — and labelled as such.", AMBER),
+    ("Comments ≠ verified facts", "Community observations are visually distinct from the AI CHECK PASSED assessment — and labelled as such.", AMBER),
     ("Corroboration, not reputation", "Nearby reports reinforce an incident's evidence. No user trust scores — people aren't ranked.", GREEN),
     ("Honest geolocation", "Real GPS → reverse-geocoded full address, editable before saving. If it fails: clearly marked “approximate”.", GREEN),
 ]

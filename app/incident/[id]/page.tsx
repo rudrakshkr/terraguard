@@ -25,6 +25,74 @@ const IncidentMap = dynamic(() => import("@/components/IncidentMap"), {
 
 import { jsPDF } from "jspdf";
 
+
+const OFFLINE_CONFIRMATION_KEY = "hillsense-offline-confirmation:";
+
+function offlineConfirmationKey(userId: string, incidentId: string): string {
+  return `${OFFLINE_CONFIRMATION_KEY}${userId}:${incidentId}`;
+}
+
+function readOfflineConfirmation(incidentId: string, userId?: string | null) {
+  if (!userId) return null;
+  try {
+    const raw = localStorage.getItem(offlineConfirmationKey(userId, incidentId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { response?: "yes" | "no"; at?: string };
+    if ((parsed.response !== "yes" && parsed.response !== "no") || typeof parsed.at !== "string") {
+      localStorage.removeItem(offlineConfirmationKey(userId, incidentId));
+      return null;
+    }
+    return parsed as { response: "yes" | "no"; at: string };
+  } catch {
+    return null;
+  }
+}
+
+function writeOfflineConfirmation(incidentId: string, userId: string | null | undefined, confirmation: { response: "yes" | "no"; at: string } | null) {
+  if (!userId) return;
+  try {
+    const key = offlineConfirmationKey(userId, incidentId);
+    if (confirmation) localStorage.setItem(key, JSON.stringify(confirmation));
+    else localStorage.removeItem(key);
+  } catch {
+    /* local storage unavailable */
+  }
+}
+
+async function cacheIncidentDetail(
+  incidentId: string,
+  incidentData: unknown,
+  commentData: unknown[],
+  userId?: string | null,
+  confirmation?: { response: "yes" | "no"; at: string } | null,
+): Promise<void> {
+  try {
+    const { putCachedDetail } = await import("@/lib/offline-db");
+    await putCachedDetail(incidentId, incidentData, commentData);
+    if (userId) writeOfflineConfirmation(incidentId, userId, confirmation ?? null);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+async function readCachedIncidentDetail(
+  incidentId: string,
+  userId?: string | null,
+): Promise<{ incident: unknown; comments: unknown[]; my_confirmation: { response: "yes" | "no"; at: string } | null } | null> {
+  try {
+    const { getCachedDetail } = await import("@/lib/offline-db");
+    const cached = await getCachedDetail(incidentId);
+    if (!cached) return null;
+    return {
+      incident: cached.incident,
+      comments: cached.comments ?? [],
+      my_confirmation: readOfflineConfirmation(incidentId, userId),
+    };
+  } catch {
+    return null;
+  }
+}
+
 interface CommentItem {
   id: string;
   user_id: string;
@@ -152,9 +220,14 @@ function useDistance(i: Incident | null) {
 export default function IncidentPage() {
   const { id } = useParams<{ id: string }>();
   const { user, authed, loading: authLoading } = useAuth();
+
   const [incident, setIncident] = useState<Incident | null>(null);
   const [comments, setComments] = useState<CommentItem[]>([]);
-  const [myConfirmation, setMyConfirmation] = useState<{ response: "yes" | "no"; at: string } | null>(null);
+  const [myConfirmation, setMyConfirmation] = useState<{
+    response: "yes" | "no";
+    at: string;
+  } | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -162,129 +235,267 @@ export default function IncidentPage() {
   const [commentText, setCommentText] = useState("");
   const [postingComment, setPostingComment] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
+
   const distance = useDistance(incident);
   const loadedOnceRef = useRef(false);
-
-  const load = () => {
-    // authFetch: signed-in users get my_confirmation back; guests get the public view.
-    // A brief retry ladder: immediately after publishing, a serverless instance
-    // on another region may briefly not see the new document yet.
-    const delays = [0, 800, 2000];
-    const attempts = delays.map(
-      (delay) =>
-        new Promise<void>((resolve) => {
-          setTimeout(() => resolve(fetchOnce()), delay);
-        }),
-    );
-    return Promise.allSettled(attempts);
-  };
 
   const fetchOnce = () => {
     authFetch(`/api/incidents/${id}`, { cache: "no-store" })
       .then(async (r) => {
         const data = await r.json();
-        if (!r.ok) throw new Error(data.error ?? "failed");
+
+        if (!r.ok) {
+          throw new Error(data.error ?? "failed");
+        }
+
         setIncident(data.incident as Incident);
         setComments((data.comments ?? []) as CommentItem[]);
         setMyConfirmation(data.my_confirmation ?? null);
         loadedOnceRef.current = true;
         setError(null);
-        // Persist to IndexedDB so the incident stays readable offline.
-        try {
-          const { putCachedDetail } = await import("@/lib/offline-db");
-          await putCachedDetail(id, data.incident, data.comments ?? []);
-        } catch { /* storage unavailable */ }
+
+        // Persist the incident for offline viewing.
+        await cacheIncidentDetail(
+          id,
+          data.incident,
+          data.comments ?? [],
+          user?.id,
+          data.my_confirmation ?? null,
+        );
       })
       .catch((e: unknown) => {
-        if (incident || loadedOnceRef.current) return; // had data — never flash the error
-        // Offline / server unreachable: fall back to the last stored copy.
+        // Do not replace already-loaded data with an error.
+        if (incident || loadedOnceRef.current) return;
+
+        // Offline / server unreachable:
+        // fall back to the last cached copy.
         void (async () => {
-          try {
-            const { getCachedDetail } = await import("@/lib/offline-db");
-            const cached = await getCachedDetail(id);
-            if (cached) {
-              setIncident(cached.incident as Incident);
-              setComments((cached.comments ?? []) as CommentItem[]);
-              loadedOnceRef.current = true;
-              setNotice("Showing the saved copy from your last visit (offline).");
-              return;
-            }
-          } catch { /* storage unavailable */ }
-          setError("Could not load this incident. Check the link and try again.");
+          const cached = await readCachedIncidentDetail(id, user?.id);
+
+          if (cached) {
+            setIncident(cached.incident as Incident);
+            setComments(cached.comments as CommentItem[]);
+            setMyConfirmation(cached.my_confirmation);
+            loadedOnceRef.current = true;
+            setNotice(
+              "Showing the saved copy from your last visit (offline).",
+            );
+            return;
+          }
+
+          setError(
+            "Could not load this incident. Check the link and try again.",
+          );
         })();
+
         void e;
       });
   };
 
+  const load = () => {
+    // Signed-in users receive my_confirmation from the API.
+    // Guests receive the public incident view.
+    //
+    // Brief retry ladder in case a newly-created incident is temporarily
+    // unavailable across serverless instances/regions.
+    const delays = [0, 800, 2000];
+
+    const attempts = delays.map(
+      (delay) =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            fetchOnce();
+            resolve();
+          }, delay);
+        }),
+    );
+
+    return Promise.allSettled(attempts);
+  };
+
   useEffect(() => {
     if (!id) return;
-    const t = setTimeout(load, 0);
+
+    const t = setTimeout(() => {
+      void load();
+    }, 0);
+
     return () => clearTimeout(t);
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, authed]);
 
+  useEffect(() => {
+    const onUpdated = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          incidentId?: string;
+          kind?: string;
+        }>
+      ).detail;
+
+      if (detail?.incidentId === id) {
+        void fetchOnce();
+      } else if (detail?.kind === "profile") {
+        void fetchOnce();
+      }
+    };
+
+    window.addEventListener(
+      "hillsense:data-updated",
+      onUpdated as EventListener,
+    );
+
+    return () =>
+      window.removeEventListener(
+        "hillsense:data-updated",
+        onUpdated as EventListener,
+      );
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
   const confirm = async (stillPresent: boolean) => {
+    if (myConfirmation) {
+      setNotice("You have already responded to this incident.");
+      return;
+    }
+
     setConfirming(true);
     setActionError(null);
-    // Offline: queue the confirmation in the outbox and reflect it locally.
-    // The server stays the source of truth — counts reconcile after sync.
+
+    // Offline:
+    // queue the confirmation locally and update the UI immediately.
+    // The server remains the source of truth after synchronization.
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       const { enqueue, newOutboxId } = await import("@/lib/offline-db");
+
       await enqueue({
         id: newOutboxId(),
         kind: "confirmation",
         incident_id: id,
-        payload: { response: stillPresent ? "yes" : "no" },
+        payload: {
+          response: stillPresent ? "yes" : "no",
+        },
         created_at: new Date().toISOString(),
         state: "pending",
         attempts: 0,
       });
-      setMyConfirmation({ response: stillPresent ? "yes" : "no", at: new Date().toISOString() });
-      setIncident((cur) =>
-        cur
-          ? {
-              ...cur,
-              confirmations_yes: (cur.confirmations_yes ?? 0) + (stillPresent ? 1 : 0),
-              confirmations_no: (cur.confirmations_no ?? 0) + (stillPresent ? 0 : 1),
-            }
-          : cur,
+
+      const confirmationAt = new Date().toISOString();
+
+      const nextConfirmation = {
+        response: stillPresent ? ("yes" as const) : ("no" as const),
+        at: confirmationAt,
+      };
+
+      setMyConfirmation(nextConfirmation);
+
+      const nextIncident = incident
+        ? {
+            ...incident,
+            confirmations_yes:
+              (incident.confirmations_yes ?? 0) +
+              (stillPresent ? 1 : 0),
+            confirmations_no:
+              (incident.confirmations_no ?? 0) +
+              (stillPresent ? 0 : 1),
+          }
+        : null;
+
+      setIncident(nextIncident);
+
+      if (nextIncident) {
+        await cacheIncidentDetail(
+          id,
+          nextIncident,
+          comments,
+          user?.id,
+          nextConfirmation,
+        );
+      }
+
+      writeOfflineConfirmation(
+        id,
+        user?.id,
+        nextConfirmation,
       );
-      setNotice("Saved offline — your response will sync when you're back online.");
+
+      setNotice(
+        "Saved offline — your response will sync when you're back online.",
+      );
+
       setConfirming(false);
       return;
     }
+
     try {
       let res = await authFetch(`/api/incidents/${id}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "confirm", response: stillPresent ? "yes" : "no" }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "confirm",
+          response: stillPresent ? "yes" : "no",
+        }),
       });
-      // First click straight after a page refresh can race the session
-      // hydration (module token cache not yet populated). Give it one chance
-      // to resolve, then retry — the user should never see a false
-      // "please sign in" while they are actually signed in.
+
+      // A first click immediately after refresh can race session hydration.
+      // Give the auth token a brief chance to become available, then retry.
       if (res.status === 401 && !getAuthToken()) {
         await new Promise((r) => setTimeout(r, 350));
+
         if (getAuthToken()) {
           res = await authFetch(`/api/incidents/${id}`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "confirm", response: stillPresent ? "yes" : "no" }),
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              action: "confirm",
+              response: stillPresent ? "yes" : "no",
+            }),
           });
         }
       }
+
       const data = await res.json();
+
       if (res.status === 401) {
-        setActionError("Your session has expired. Please sign in again to confirm hazards.");
+        setActionError(
+          "Your session has expired. Please sign in again to confirm hazards.",
+        );
         return;
       }
+
       if (!res.ok) {
-        setActionError(data.error ?? "Could not record your response.");
+        setActionError(
+          data.error ?? "Could not record your response.",
+        );
         return;
       }
+
       setIncident(data.incident as Incident);
-      if (data.my_confirmation) setMyConfirmation(data.my_confirmation);
-      setNotice(data.message ?? (data.already_confirmed ? "You already responded to this hazard." : "Thanks — your response was recorded."));
+
+      if (data.my_confirmation) {
+        setMyConfirmation(data.my_confirmation);
+      }
+
+      await cacheIncidentDetail(
+        id,
+        data.incident,
+        comments,
+        user?.id,
+        data.my_confirmation ?? null,
+      );
+
+      setNotice(
+        data.message ??
+          (data.already_confirmed
+            ? "You already responded to this hazard."
+            : "Thanks — your response was recorded."),
+      );
     } catch {
       setActionError("Network problem — please try again.");
     } finally {
@@ -327,6 +538,18 @@ export default function IncidentPage() {
         ...c,
       ]);
       setCommentText("");
+      const nextComments = [{
+        id: localId,
+        user_id: user?.id ?? "",
+        author_name: user?.display_name ?? "You",
+        author_display_name: user?.display_name ?? "You",
+        author_initials: user?.initials,
+        author_avatar_url: user?.avatar_url ?? null,
+        body: text,
+        created_at: new Date().toISOString(),
+        local_state: "pending" as const,
+      }, ...comments];
+      await cacheIncidentDetail(id, incident, nextComments, user?.id, myConfirmation);
       setNotice("Saved offline — your update will sync when you're back online.");
       setPostingComment(false);
       return;

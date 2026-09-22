@@ -4,9 +4,11 @@
  * Strategy per request type:
  *  - App shell / static assets: stale-while-revalidate. The app always opens
  *    instantly, even offline.
- *  - GET /api/incidents… and /api/incidents/<id>: network-first with cache
- *    fallback. Online you always get live data; offline the last-seen data is
- *    served from Cache Storage and flagged as cached by the app.
+ *  - Public GET /api/incidents?public=1 and GET /api/clusters: network-first
+ *    with cache fallback. These responses contain public data only.
+ *  - Incident detail is NOT cached by the worker because authenticated detail
+ *    responses contain the caller's private `my_confirmation` state. The app
+ *    stores detail copies in user-scoped IndexedDB instead.
  *  - Safety guidance (kb-guidance cache + /api/safety-guidance): cache-first —
  *    this content is static and must survive full loss of connectivity.
  *  - Everything else (auth, writes, geocoding): network only. Writes made
@@ -17,12 +19,12 @@
  * cached gets a real error, and the UI says the data is unavailable offline.
  */
 
-const VERSION = "hs-v1";
+const VERSION = "hs-v3";
 const SHELL_CACHE = `${VERSION}-shell`;
 const DATA_CACHE = `${VERSION}-data`;
 const GUIDANCE_CACHE = `${VERSION}-guidance`;
 
-const SHELL_ASSETS = ["/", "/ask", "/report", "/profile", "/manifest.webmanifest"];
+const SHELL_ASSETS = ["/", "/ask", "/report", "/profile", "/login", "/onboarding", "/home", "/dashboard", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -87,19 +89,17 @@ async function dataStrategy(request) {
   try {
     const res = await fetch(request);
     if (res && res.ok) {
-      // Key by pathname (drop auth headers' variance) so offline reads work
-      // regardless of whether the original request was authenticated. The
-      // put is best-effort: a storage failure must never fail the request.
       try {
-        const key = new Request(new URL(request.url).pathname, { method: "GET" });
-        await cache.put(key, res.clone());
+        // Cache by the full URL, including query parameters. Never cache a
+        // personalized response that carries Authorization.
+        await cache.put(new Request(request.url, { method: "GET" }), res.clone());
       } catch (putErr) {
         console.warn("[sw] cache.put failed (continuing)", putErr);
       }
     }
     return res;
   } catch {
-    const key = new Request(new URL(request.url).pathname, { method: "GET" });
+    const key = new Request(request.url, { method: "GET" });
     const cached = await cache.match(key);
     if (cached) {
       const headers = new Headers(cached.headers);
@@ -138,10 +138,8 @@ async function guidanceStrategy(request) {
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
-  // Requests from the app's own fetch client (authFetch) may carry an
-  // Authorization header; Cache Storage refuses to store such requests.
-  // dataStrategy keys by bare pathname, so this is safe — but we must not
-  // abort the whole fetch when the PUT fails.
+  // Only explicitly public, non-authenticated API reads are cacheable.
+  // Personalized or write-like endpoints stay network-only.
   if (req.method !== "GET") return; // writes go through the app's outbox
 
   const url = new URL(req.url);
@@ -151,14 +149,17 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(guidanceStrategy(req));
     return;
   }
-  if (
-    url.pathname === "/api/incidents" ||
-    /^\/api\/incidents\/[^/]+$/.test(url.pathname) ||
-    url.pathname === "/api/clusters" ||
-    url.pathname === "/api/rag-status"
-  ) {
-    event.respondWith(dataStrategy(req));
-    return;
+  if (url.pathname === "/api/incidents" || url.pathname === "/api/clusters") {
+    const hasAuth = req.headers.has("authorization");
+    const isPublicIncidents = url.pathname === "/api/incidents" && url.searchParams.get("public") === "1";
+    if (!hasAuth && (url.pathname === "/api/clusters" || isPublicIncidents)) {
+      event.respondWith(dataStrategy(req));
+      return;
+    }
+    // Authenticated/private responses remain network-only. Incident detail is
+    // deliberately excluded from SW caching because it contains the caller's
+    // private `my_confirmation` state; the app's IndexedDB detail cache is
+    // user-scoped instead.
   }
   if (url.pathname.startsWith("/api/")) return; // auth, analyze, ask, geo — live only
   event.respondWith(shellStrategy(req));

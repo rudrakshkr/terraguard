@@ -16,6 +16,7 @@ import { fmtDate } from "@/lib/labels";
 import { needsReconfirmation, detectClusters, fmtAge, minutesSince } from "@/lib/geo";
 import { SeverityChip, VerificationChip, OriginChip } from "@/components/Badge";
 import { Spinner } from "@/components/Spinner";
+import { useAuth, authFetch } from "@/hooks/useAuth";
 
 const IncidentMap = dynamic(() => import("@/components/IncidentMap"), {
   ssr: false,
@@ -25,6 +26,7 @@ const IncidentMap = dynamic(() => import("@/components/IncidentMap"), {
 const TYPE_COLORS = ["#0e7490", "#155e75", "#1d4ed8", "#4f46e5", "#7c3aed", "#b91c1c", "#c2410c", "#a16207", "#15803d"];
 
 export default function DashboardPage() {
+  const { authed } = useAuth();
   const [incidents, setIncidents] = useState<Incident[] | null>(null);
   const [clusters, setClusters] = useState<ReturnType<typeof detectClusters>>([]);
   const [error, setError] = useState<string | null>(null);
@@ -116,7 +118,14 @@ export default function DashboardPage() {
       }),
     );
     try {
-      const res = await fetch(`/api/incidents/${id}`, {
+      if (!authed) {
+        if (previous !== undefined) {
+          setIncidents((prev) => (prev ?? []).map((i) => (i.id === id ? { ...i, status: previous! } : i)));
+        }
+        setError("Sign in to update incident status.");
+        return;
+      }
+      const res = await authFetch(`/api/incidents/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
@@ -382,7 +391,7 @@ export default function DashboardPage() {
           </table>
         </div>
         <p className="mt-3 text-[11px] faint">
-          Status changes persist immediately. All rows are example data — nothing here is a live alert.
+          Incident status changes require a signed-in account. In a production deployment, restrict this control to authorized operators. All rows are demonstration data — nothing here is a live emergency alert.
         </p>
       </div>
     </div>
