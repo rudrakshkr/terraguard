@@ -49,6 +49,7 @@ Classify the user's report (text, and image if provided) into JSON with EXACTLY 
 }
 
 If the report includes an image, also judge consistency: when the image does NOT show the hazard described in the text, set confidence below 0.4, set needs_verification to true, and explain the mismatch in verification_note.
+Report disagreement, an unclear photo, or a low-confidence reading as UNCERTAINTY for review only. Never word your output as if the reporter is being untruthful — you assess evidence consistency, not the person.
 
 Severity guide:
 - Critical: people trapped/injured/missing, structural collapse, violent flash flood, fire near habitation

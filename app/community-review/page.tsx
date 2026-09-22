@@ -30,7 +30,10 @@ export default function CommunityReviewPage() {
   }, [authed]);
 
   useEffect(() => {
-    if (!authLoading && authed) void load();
+    if (authLoading || !authed) return;
+    // Deferred so the initial load never cascades a synchronous re-render.
+    const t = setTimeout(() => void load(), 0);
+    return () => clearTimeout(t);
   }, [authLoading, authed, load]);
 
   async function confirm(id: string, response: "yes" | "no") {

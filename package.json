@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:kv": "node tests/kv-concurrency.test.mjs",
-    "test:persistence": "node tests/persistence.test.mjs"
+    "test:persistence": "node tests/persistence.test.mjs",
+    "test:verification": "node tests/verification.test.mjs"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.0",

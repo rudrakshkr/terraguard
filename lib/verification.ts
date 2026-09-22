@@ -138,15 +138,16 @@ export function verifyReport(input: {
   );
 
   /* ------------------------ image ↔ description consistency -------------------- */
-  // The classifier is explicitly instructed to lower confidence on mismatch; we
-  // surface that signal as a first-class check instead of hiding it in a score.
+  // A disagreement between text and photo is a REVIEW trigger, never a rejection.
+  // An unclear photo — or a description the model could not match to it — is not
+  // evidence that the report is false, so this can only ever be "warn".
   const contradiction =
     hasImage && hasText && a.needs_verification === true && a.confidence < 0.45;
   add(
     "Image ↔ description consistency",
-    contradiction ? "fail" : hasImage && hasText ? "pass" : hasImage || hasText ? "warn" : "fail",
+    contradiction ? "warn" : hasImage && hasText ? "pass" : hasImage || hasText ? "warn" : "fail",
     contradiction
-      ? "Image and description appear to describe different situations — the classifier flagged a sharp confidence drop with both inputs present."
+      ? "Image and description are not fully consistent. The report has been retained for human/community review."
       : hasImage && hasText
         ? "Description matches the visible evidence in the photo (model agreement)."
         : hasImage
@@ -167,12 +168,14 @@ export function verifyReport(input: {
       Flood: ["Flash Flood"],
     };
     const isSibling = (siblings[declaredType] ?? []).includes(a.incident_type);
+    // A type mismatch — even a large one — is a review signal, not a hard fail.
+    // Reporters often observe a hazard differently from how the model labels it.
     add(
       "Hazard-type consistency",
-      isSibling ? "warn" : "fail",
+      "warn",
       isSibling
-        ? `Declared "${declaredType}" but classification found the closely related "${a.incident_type}".`
-        : `Declared "${declaredType}" but the AI classified "${a.incident_type}" — a mismatch that needs review.`,
+        ? `Reporter selected "${declaredType}" and the AI classified the closely related "${a.incident_type}" — this difference needs review.`
+        : `Reporter selected "${declaredType}" but the AI classified the evidence as "${a.incident_type}". This difference needs review.`,
     );
   } else {
     add(
@@ -185,16 +188,22 @@ export function verifyReport(input: {
   }
 
   /* ------------------------------- text quality -------------------------------- */
+  // Short or vague text is a review trigger. Only unreadable text with NO other
+  // evidence at all is treated as unusable (see the final decision below).
+  const textWords = reportText.split(/\s+/).filter(Boolean);
+  const vague = hasText && !gibberish && (textWords.length < 4 || reportText.length < 18);
   add(
     "Description quality",
-    !hasText ? "skip" : gibberish ? (hasImage ? "warn" : "fail") : "pass",
+    !hasText ? "skip" : gibberish ? (hasImage ? "warn" : "fail") : vague ? "warn" : "pass",
     !hasText
       ? "No description provided."
       : gibberish
         ? hasImage
-          ? "The written description is not readable text — only the photo could be assessed, so this cannot be auto-published."
-          : "The written description is not readable text (it appears to be random characters), so there is no evidence to check."
-        : `Description contains hazard-relevant detail (${a.risk_factors?.length ?? 0} risk factors extracted).`,
+          ? "The written description is not readable text. The photo is treated as the primary evidence, so the report is retained for review rather than rejected."
+          : "The written description is not readable text (it appears to be random characters) and no photo was submitted, so there is no evidence to check."
+        : vague
+          ? "The description is very short — it may lack the detail needed to assess the hazard, so the report is retained for review."
+          : `Description contains hazard-relevant detail (${a.risk_factors?.length ?? 0} risk factors extracted).`,
   );
 
   /* ------------------------- image plausibility / quality ---------------------- */
@@ -203,11 +212,11 @@ export function verifyReport(input: {
     const textHits = words.filter((w) => (input.context ?? "").toLowerCase().includes(w) || (hasText ? a.summary.toLowerCase().includes(w) : false));
     add(
       "Image plausibility",
-      contradiction ? "fail" : band === "Low" ? "warn" : "pass",
+      contradiction ? "warn" : band === "Low" ? "warn" : "pass",
       contradiction
-        ? "The photo does not contain visible evidence consistent with the reported hazard."
+        ? "The photo could not be matched confidently to the described hazard. Retained for review — an unclear photo is not treated as evidence that the report is false."
         : band === "Low"
-          ? "Photo could not be confidently assessed — treat as unverified visual evidence."
+          ? "Photo could not be confidently interpreted (unclear, low light, or distant). Retained for review as unverified visual evidence."
           : `Photo assessed for ${a.incident_type} indicators${textHits.length ? `; description references ${textHits.slice(0, 2).join(", ")}` : ""}.`,
     );
   } else {
@@ -266,11 +275,18 @@ export function verifyReport(input: {
     add("Nearby corroboration", "warn", "No related reports found nearby — first report for this area/event.");
   }
 
-  /* ------------------------------ final decision ------------------------------- */
-  const hardFails = checks.filter((c) => c.pass === "fail");
-  const warns = checks.filter((c) => c.pass === "warn");
+  /* ------------------------------ final decision -------------------------------
+   * Policy (evidence consistency, NOT truthfulness):
+   *  - NOT PUBLISHED is reserved for genuinely unusable submissions: nothing
+   *    submitted at all, or unreadable text with no other evidence to check.
+   *  - Any doubt at all — low evidence quality, an unclear photo, a hazard-type
+   *    difference, a short description, or no nearby corroboration — keeps the
+   *    report alive as NEEDS REVIEW so the community can corroborate it.
+   *  - AI CHECK PASSED is only returned when the checks raise no doubt.
+   */
+  const hardReject = (!hasText && !hasImage) || (gibberish && !hasImage);
 
-  if (hardFails.length > 0) {
+  if (hardReject) {
     return {
       status: "rejected",
       reasons: checks.filter((c) => c.pass !== "skip").map((c) => `${c.check}: ${c.detail}`),
@@ -279,17 +295,19 @@ export function verifyReport(input: {
       publication: "hidden",
       headline: "NOT PUBLISHED",
       explanation:
-        "The submitted evidence does not consistently support the reported hazard. The report has not been published. If this is a real emergency, call 112.",
+        "This submission contains no usable evidence, so there is nothing that could be assessed or reviewed. If this is a real emergency, call 112.",
     };
   }
 
-  const weak =
-    gibberish || // unreadable description must never be auto-published
+  const doubts = checks.filter((c) => c.pass === "warn" || c.pass === "fail");
+  const reviewFocus = doubts.map((c) => c.check);
+  const needsReview =
+    !aiAvailable || // heuristic mode — no model assessment of the evidence was possible
     a.needs_verification === true ||
-    band === "Low" ||
-    (!aiAvailable && a.incident_type === "Other" && !hasImage);
+    a.confidence < 0.8 ||
+    reviewFocus.length > 0;
 
-  if (weak) {
+  if (needsReview) {
     return {
       status: "needs_review",
       reasons: checks.filter((c) => c.pass !== "skip").map((c) => `${c.check}: ${c.detail}`),
@@ -298,7 +316,9 @@ export function verifyReport(input: {
       publication: "review_only",
       headline: "NEEDS REVIEW",
       explanation:
-        "The available evidence is insufficient to confidently verify the reported hazard. It is saved for review and is not shown to nearby users.",
+        "The report has been saved, but the evidence needs community or human review before it is shown as a live alert." +
+        (reviewFocus.length ? ` Needs review: ${reviewFocus.slice(0, 4).join(", ")}.` : "") +
+        " Signed-in users nearby can confirm what they can see; once it is corroborated it can be published. This is an evidence check, not a judgement about the reporter.",
     };
   }
 
@@ -310,9 +330,6 @@ export function verifyReport(input: {
     publication: "public",
     headline: "AI CHECK PASSED",
     explanation:
-      "Evidence appears consistent with the reported hazard. Published as a public alert for nearby users.",
-    ...(warns.length > 2
-      ? { explanation: "Evidence is broadly consistent with the reported hazard. Published as a public alert for nearby users." }
-      : {}),
+      "The submitted evidence is internally consistent and no conflicts were found. Published as a public alert for nearby users. This is an evidence check, not a judgement about the reporter.",
   };
 }
