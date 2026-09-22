@@ -99,7 +99,14 @@ async function refreshFromServer(): Promise<void> {
         /* private mode */
       }
     } else {
-      setSession(null, null);
+      // Only an explicit 401 (invalid/expired session) means "signed out".
+      // A 5xx means the server itself is failing (for example a deployment
+      // with storage not configured) — destroying the local session there
+      // would wrongly sign a valid user out on every page load. Keep the
+      // cached session; the next successful refresh validates it.
+      if (res.status === 401) {
+        setSession(null, null);
+      }
       loaded = true;
       return;
     }

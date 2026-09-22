@@ -23,7 +23,7 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import { kvMode, dataDir, kvLoadDoc, kvMutate } from "./kv";
+import { kvMode, dataDir, kvLoadDoc, kvMutate, requirePersistentStore } from "./kv";
 
 const DATA_PATH = `${dataDir}/.hillsense-auth.json`.replace("//", "/");
 const KV_KEY = "hillsense:auth:v1";
@@ -139,6 +139,9 @@ async function mutate<R>(fn: (d: AuthDb) => { doc: AuthDb; result: R }): Promise
   if (kvMode !== "file") {
     return kvMutate<AuthDb, R>(KV_KEY, async () => ({ ...EMPTY }), async (cur) => fn(cur));
   }
+  // Sessions/users must never be "saved" into a serverless tmpfs — that is
+  // what logged everyone out on Vercel. Local dev file mode is fine.
+  requirePersistentStore();
   const cur = await loadDb();
   const { doc, result } = fn(cur);
   db = doc;

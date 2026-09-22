@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizePhone, verifyOtp, publicUser } from "@/lib/auth";
+import { persistenceConfigError } from "@/lib/kv";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
+  // Users/sessions live in the persistent store — refuse clearly when the
+  // deployment cannot persist them instead of silently losing the sign-in.
+  const cfgErr = persistenceConfigError();
+  if (cfgErr) return NextResponse.json(cfgErr, { status: 503 });
+
   try {
     const body = (await req.json()) as { phone?: string; code?: string };
     const phone = normalizePhone(body.phone ?? "");

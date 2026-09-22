@@ -11,7 +11,7 @@
 
 import fs from "node:fs/promises";
 import type { Incident } from "./types";
-import { kvMode, dataDir, kvLoadDoc, kvMutate } from "./kv";
+import { kvMode, dataDir, kvLoadDoc, kvMutate, requirePersistentStore } from "./kv";
 
 const DATA_PATH = `${dataDir}/.hillsense-community.json`.replace("//", "/");
 const KV_KEY = "hillsense:community:v1";
@@ -104,6 +104,9 @@ async function mutate<R>(fn: (d: CommunityDb) => { doc: CommunityDb; result: R }
   if (kvMode !== "file") {
     return kvMutate<CommunityDb, R>(KV_KEY, async () => ({ ...EMPTY }), async (cur) => fn(cur));
   }
+  // Confirmations/comments must never land in serverless tmpfs (lost between
+  // requests on Vercel). Local dev file mode is fine.
+  requirePersistentStore();
   const cur = await loadDb();
   const { doc, result } = fn(cur);
   cacheSet(doc);

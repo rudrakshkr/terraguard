@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { userFromRequest, updateUser, publicUser } from "@/lib/auth";
+import { persistenceConfigError } from "@/lib/kv";
 import { deleteAvatarByUrl } from "@/lib/avatar-store";
 
 export const runtime = "nodejs";
@@ -136,6 +137,11 @@ function validateAvatarUrl(value: unknown): {
 }
 
 export async function POST(req: NextRequest) {
+  // Profile edits live in the persistent store — refuse clearly when the
+  // deployment cannot persist them instead of silently losing the save.
+  const cfgErr = persistenceConfigError();
+  if (cfgErr) return NextResponse.json(cfgErr, { status: 503 });
+
   try {
     const user = await userFromRequest(req);
 

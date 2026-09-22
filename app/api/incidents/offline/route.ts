@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { userFromRequest, publicUser } from "@/lib/auth";
+import { persistenceConfigError } from "@/lib/kv";
 import { addIncident, listIncidents } from "@/lib/store";
 import { LOCATIONS } from "@/lib/threat";
 import { findRelated } from "@/lib/geo";
@@ -44,6 +45,10 @@ interface OfflineReportPayload {
  *  - 400/413/415 → permanently rejected (validation) — sync marks failed.
  */
 export async function POST(req: NextRequest) {
+  // Refuse clearly when the deployment cannot persist reports.
+  const cfgErr = persistenceConfigError();
+  if (cfgErr) return NextResponse.json(cfgErr, { status: 503 });
+
   try {
     const user = await userFromRequest(req);
     if (!user) {

@@ -13,7 +13,7 @@
  */
 
 import fs from "node:fs/promises";
-import { kvMode, dataDir, kvLoadDoc, kvMutate } from "./kv";
+import { kvMode, dataDir, kvLoadDoc, kvMutate, requirePersistentStore } from "./kv";
 
 const DATA_PATH = `${dataDir}/.hillsense-uploads.json`.replace("//", "/");
 const KV_KEY = "hillsense:uploads:v1";
@@ -49,6 +49,7 @@ async function mutate<R>(fn: (d: UploadsDb) => { doc: UploadsDb; result: R }): P
   if (kvMode !== "file") {
     return kvMutate<UploadsDb, R>(KV_KEY, async () => ({ ...EMPTY }), async (cur) => fn(cur));
   }
+  requirePersistentStore();
   const cur = cache ?? (await fallback());
   const { doc, result } = fn(cur);
   cache = doc;

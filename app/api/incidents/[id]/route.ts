@@ -11,6 +11,7 @@ import {
   withAuthorProfiles,
 } from "@/lib/community-store";
 import { userFromRequest, getUserById, isOperatorUser } from "@/lib/auth";
+import { persistenceConfigError } from "@/lib/kv";
 
 export const runtime = "nodejs";
 // Never cache: incidents and community data must be live across all clients.
@@ -71,6 +72,11 @@ export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  // Confirmations/comments are durable community records — refuse clearly
+  // when the deployment cannot persist them.
+  const cfgErr = persistenceConfigError();
+  if (cfgErr) return NextResponse.json(cfgErr, { status: 503 });
+
   try {
     const { id } = await ctx.params;
     const incident = await getIncident(id);
@@ -182,6 +188,9 @@ export async function PATCH(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  const cfgErr = persistenceConfigError();
+  if (cfgErr) return NextResponse.json(cfgErr, { status: 503 });
+
   try {
     const user = await userFromRequest(req);
     if (!user) {
@@ -227,6 +236,9 @@ export async function DELETE(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  const cfgErr = persistenceConfigError();
+  if (cfgErr) return NextResponse.json(cfgErr, { status: 503 });
+
   try {
     await ctx.params; // incident id not strictly needed, comment id is authoritative
     const user = await userFromRequest(req);

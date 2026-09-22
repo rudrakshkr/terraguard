@@ -14,8 +14,14 @@
  *     requests (e.g. two phones confirming at once) can never clobber each
  *     other or double-submit. Expired leases are reclaimed automatically.
  *
- *  3. FILE mode (default, local dev) — plain JSON files in the project root,
+ *  3. FILE mode (LOCAL DEV ONLY) — plain JSON files in the project root,
  *     exactly as before. Single-process access makes read-modify-write safe.
+ *
+ * Production guard: Vercel serverless instances share NO disk, so file mode
+ * silently loses every write between requests (users logged out, profiles
+ * forgotten). When running on Vercel with neither remote backend configured,
+ * writes throw a clear configuration error instead of pretending to save, and
+ * /api/storage-status reports persistent:false for deployment verification.
  *
  * Documents are tiny (no images are stored), well within all limits.
  */
@@ -25,8 +31,20 @@ const REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN;
 /** Vercel OIDC style: store id + a runtime OIDC token (no static credentials). */
 const BLOB_OIDC = Boolean(process.env.BLOB_STORE_ID && process.env.VERCEL_OIDC_TOKEN);
-/** Escape hatch: set HS_STORE=file to force local files even with a blob token. */
-const FORCE_FILE = process.env.HS_STORE === "file";
+
+/**
+ * Vercel detection. `vercel dev` also sets VERCEL=1 but runs on a real local
+ * disk, so it counts as local development (VERCEL_ENV=development).
+ */
+const IS_VERCEL =
+  (process.env.VERCEL === "1" || process.env.VERCEL === "true") &&
+  process.env.VERCEL_ENV !== "development";
+
+/** LOCAL DEV ONLY escape hatch: set HS_STORE=file to force local files. */
+const FORCE_FILE = process.env.HS_STORE === "file" && !IS_VERCEL;
+if (process.env.HS_STORE === "file" && IS_VERCEL) {
+  console.warn("[kv] HS_STORE=file was ignored: file storage cannot persist on Vercel.");
+}
 
 export type KvMode = "upstash" | "blob" | "file";
 
@@ -41,8 +59,63 @@ export const kvMode: KvMode = FORCE_FILE
 /** True in either remote (shared) mode. */
 export const kvEnabled = kvMode !== "file";
 
-/** Writable directory for file-mode data (serverless fallbacks use /tmp). */
+/** Writable directory for file-mode data (local development only). */
 export const dataDir = process.env.HS_DATA_DIR || process.cwd();
+
+/* ------------------------- production persistence guard -------------------- */
+
+/** Which remote backends are configured (booleans only — never any values). */
+export const storageConfig = {
+  upstash: Boolean(REST_URL && REST_TOKEN),
+  blob: Boolean(BLOB_TOKEN || BLOB_OIDC),
+} as const;
+
+/** "vercel" on Vercel's serverless runtime, "local" everywhere else. */
+export const storageRuntime: "vercel" | "local" = IS_VERCEL ? "vercel" : "local";
+
+/**
+ * True when writes are durably persisted: either remote backend, or real
+ * files in local development. False ONLY on Vercel without a remote backend —
+ * the state in which user data would be lost between requests.
+ */
+export const storagePersistent = kvMode !== "file" || !IS_VERCEL;
+
+/**
+ * Non-null when the runtime cannot persist data: Vercel serverless instances
+ * share NO disk, so file mode silently loses every user, session and profile
+ * between requests (the "signed out after reload" bug). In that state writes
+ * fail loudly instead of pretending to save. Fix the deployment env —
+ * configure Upstash Redis or Vercel Blob (see /api/storage-status).
+ */
+export const persistenceProblem: string | null =
+  kvMode === "file" && IS_VERCEL
+    ? "Persistent storage is not configured. Configure Upstash Redis or Vercel Blob before using account persistence."
+    : null;
+
+if (persistenceProblem) {
+  console.error(`[kv] ${persistenceProblem} (diagnostic: /api/storage-status)`);
+}
+
+/** Thrown instead of silently accepting a write that would be lost. */
+export class PersistentStorageNotConfiguredError extends Error {
+  constructor() {
+    super(persistenceProblem ?? "Persistent storage is not configured.");
+    this.name = "PersistentStorageNotConfiguredError";
+  }
+}
+
+/** Guard for file-mode write paths: local dev is fine, Vercel production is not. */
+export function requirePersistentStore(): void {
+  if (persistenceProblem) throw new PersistentStorageNotConfiguredError();
+}
+
+/**
+ * Non-null 503 payload when the runtime cannot persist data, for route
+ * handlers to return before touching storage. Null in every healthy mode.
+ */
+export function persistenceConfigError(): { error: string } | null {
+  return persistenceProblem ? { error: persistenceProblem } : null;
+}
 
 /* ------------------------------- upstash rest ------------------------------ */
 

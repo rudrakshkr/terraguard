@@ -3,6 +3,7 @@ import { listIncidents, addIncident } from "@/lib/store";
 import { LOCATIONS } from "@/lib/threat";
 import { findRelated, haversineKm, fmtDistance } from "@/lib/geo";
 import { userFromRequest, publicUser, isOperatorUser } from "@/lib/auth";
+import { persistenceConfigError } from "@/lib/kv";
 import { listComments, commentCountsFor } from "@/lib/community-store";
 import type { Incident, Severity } from "@/lib/types";
 
@@ -116,6 +117,10 @@ function validCoords(lat: unknown, lng: unknown): lat is number {
 }
 
 export async function POST(req: NextRequest) {
+  // Refuse clearly when the deployment cannot persist reports.
+  const cfgErr = persistenceConfigError();
+  if (cfgErr) return NextResponse.json(cfgErr, { status: 503 });
+
   try {
     const user = await userFromRequest(req);
     if (!user) {

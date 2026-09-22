@@ -6,7 +6,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { seedIncidents } from "./seed-incidents";
-import { kvMode, dataDir, kvLoadDoc, kvSaveDoc, kvMutate } from "./kv";
+import { kvMode, dataDir, kvLoadDoc, kvSaveDoc, kvMutate, requirePersistentStore, PersistentStorageNotConfiguredError } from "./kv";
 import type { Incident, IncidentFilters } from "./types";
 
 const DATA_PATH = path.join(dataDir, ".hillsense-incidents.json");
@@ -84,10 +84,14 @@ async function persist(list: Incident[]): Promise<void> {
     await kvSaveDoc(KV_KEY, list);
     return;
   }
+  // Incident writes must never land in serverless tmpfs — that silently loses
+  // every report between requests on Vercel. Local dev file mode is fine.
+  requirePersistentStore();
   try {
     await fs.writeFile(DATA_PATH, JSON.stringify(list, null, 2));
     cacheMtimeMs = (await fs.stat(DATA_PATH)).mtimeMs;
-  } catch {
+  } catch (err) {
+    if (err instanceof PersistentStorageNotConfiguredError) throw err;
     /* persistence best-effort */
   }
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { userFromRequest, publicUser } from "@/lib/auth";
+import { persistenceConfigError } from "@/lib/kv";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,11 @@ export const runtime = "nodejs";
  * public surfaces (comments, incidents) keep using publicUser().
  */
 export async function GET(req: NextRequest) {
+  // Misconfigured deployment: say so explicitly instead of answering 401,
+  // which would make every signed-in user appear logged out.
+  const cfgErr = persistenceConfigError();
+  if (cfgErr) return NextResponse.json(cfgErr, { status: 503 });
+
   const user = await userFromRequest(req);
   if (!user) return NextResponse.json({ authenticated: false }, { status: 401 });
 
