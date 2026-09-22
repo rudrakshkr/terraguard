@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useAuth, authFetch, type AuthUser } from "@/hooks/useAuth";
 import { Spinner } from "@/components/Spinner";
+import { toast } from "@/components/Toaster";
 
 interface FullProfile {
   id: string;
@@ -172,6 +173,7 @@ export default function ProfilePage() {
       if (data.user) updateProfile(data.user);
       setProfile((p) => (p ? { ...p, display_name: data.user!.display_name, email: payload.email } : p));
       setNotice("Profile saved.");
+      toast("Profile saved");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save your profile.");
     } finally {
@@ -238,6 +240,7 @@ export default function ProfilePage() {
       if (data.user) updateProfile(data.user);
       setProfile((p) => (p ? { ...p, avatar_url: null } : p));
       setNotice("Photo removed.");
+      toast("Profile photo removed");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not remove the photo.");
     } finally {

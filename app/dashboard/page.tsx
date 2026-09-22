@@ -645,7 +645,7 @@ export default function DashboardPage() {
 
         <p className="mt-3 text-[11px] faint">
           Operational status changes are restricted server-side to authorized HillSense operators.
-          Community corroboration publishes only after two independent confirmations on a report that was previously held for review.
+          Independent community observations help corroborate reports that need review — a review-only report becomes public only after at least three separate first-hand observations and no unresolved evidence contradiction.
         </p>
       </div>
     </div>

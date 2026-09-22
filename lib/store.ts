@@ -256,7 +256,7 @@ export async function confirmIncident(
             publication: "public" as const,
             verification_reasons: [
               ...(cur.verification_reasons ?? []),
-              `Community corroboration reached ${yesCount} independent confirmations.`,
+              `Community corroboration reached ${yesCount} independent observations.`,
             ],
           }
         : {}),

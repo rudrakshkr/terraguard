@@ -34,7 +34,8 @@ export interface CachedDetail {
   fetched_at: string;
 }
 
-export type OutboxKind = "confirmation" | "comment" | "report" | "profile";
+export type OutboxKind = "confirmation" | "comment" | "report" | "profile" | "like";
+export type OutboxPayload = { comment_id?: string; liked?: boolean; body?: string; like?: { comment_id?: string; liked?: boolean } } | unknown;
 export type OutboxState = "pending" | "syncing" | "synced" | "failed";
 
 export interface OutboxItem {
@@ -153,7 +154,7 @@ export async function getOutboxItem(id: string): Promise<OutboxItem | null> {
 }
 
 export async function updateOutboxItem(item: OutboxItem): Promise<void> {
-  await withStore<void>(OUTBOX, "readwrite", (s) => s.put(item));
+  await withStore<OutboxItem>(OUTBOX, "readwrite", (s) => s.put(item));
 }
 
 export async function listOutbox(): Promise<OutboxItem[]> {

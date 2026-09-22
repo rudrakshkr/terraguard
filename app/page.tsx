@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import {
-  LocateFixed, ShieldCheck, List, Map as MapIcon, Phone, LogIn, Search, Siren, WifiOff, Loader2,
+  LocateFixed, ShieldCheck, List, Map as MapIcon, Phone, LogIn, Search, WifiOff, Loader2,
 } from "lucide-react";
 import type { Incident } from "@/lib/types";
 import { useLocationPreference, PRESETS } from "@/hooks/useLocationPreference";
@@ -207,10 +207,7 @@ export default function NearbyPage() {
               </button>
             ))}
           </div>
-          <Link href="/report" className="btn btn-primary w-full min-[420px]:w-auto">
-            <Siren className="h-4 w-4" aria-hidden />
-            Report Hazard
-          </Link>
+
         </div>
       </div>
 

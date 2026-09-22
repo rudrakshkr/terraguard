@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Navbar from "@/components/Navbar";
 import OfflineIndicator from "@/components/OfflineIndicator";
+import Toaster from "@/components/Toaster";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <OfflineIndicator />
         <Navbar />
         <main className="flex-1 pb-10">{children}</main>
+        <Toaster />
       </body>
     </html>
   );

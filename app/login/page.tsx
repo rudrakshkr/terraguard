@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Phone, ShieldCheck, ArrowLeft, Info } from "lucide-react";
 import { useAuth, type AuthUser } from "@/hooks/useAuth";
 import { Spinner } from "@/components/Spinner";
+import { toast } from "@/components/Toaster";
 
 type Step = "phone" | "otp" | "onboarding";
 
@@ -99,6 +100,9 @@ function LoginForm() {
       };
       if (!res.ok || !data.token || !data.user) throw new Error(data.error ?? "Verification failed.");
       signIn(data.user, data.token);
+      toast("Signed in successfully");
+      // The server's user record decides this: an existing completed profile
+      // never sees onboarding again.
       router.replace(data.user.onboarded ? next : "/onboarding");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed.");

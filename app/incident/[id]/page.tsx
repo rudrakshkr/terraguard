@@ -7,8 +7,13 @@ import dynamic from "next/dynamic";
 import {
   ArrowLeft, Download, Printer, MapPin, ShieldCheck, Clock3, ThumbsUp, ThumbsDown,
   Phone, Ban, UsersRound, X, MessageSquare,
-  SendHorizontal, CheckCircle2, Layers, Trash2, Loader2, MoreHorizontal, RefreshCw, WifiOff,
+  SendHorizontal, CheckCircle2, Layers, Trash2, Loader2, MoreHorizontal, RefreshCw, WifiOff, Heart,
 } from "lucide-react";
+
+type CommentItemLike = CommentItem & {
+  like_count?: number;
+  liked_by_me?: boolean;
+};
 import type { Incident } from "@/lib/types";
 import { fmtDateTime, originMeta } from "@/lib/threat";
 import { fmtDistance, fmtAge, minutesSince, haversineKm } from "@/lib/geo";
@@ -21,7 +26,9 @@ import { corroborationProgressLabel, isReviewOnly } from "@/lib/community-policy
 import { Disclosure } from "@/components/Disclosure";
 import SourcesPanel from "@/components/SourcesPanel";
 import { Spinner } from "@/components/Spinner";
+import { toast } from "@/components/Toaster";
 import { useAuth, authFetch, getAuthToken } from "@/hooks/useAuth";
+import type { OutboxKind } from "@/lib/offline-db";
 
 const IncidentMap = dynamic(() => import("@/components/IncidentMap"), {
   ssr: false,
@@ -167,7 +174,7 @@ export default function IncidentPage() {
   const { id } = useParams<{ id: string }>();
   const { user, authed, loading: authLoading } = useAuth();
   const [incident, setIncident] = useState<Incident | null>(null);
-  const [comments, setComments] = useState<CommentItem[]>([]);
+  const [comments, setComments] = useState<CommentItemLike[]>([]);
   const [myConfirmation, setMyConfirmation] = useState<{ response: "yes" | "no"; at: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -201,7 +208,7 @@ export default function IncidentPage() {
         const cached = await getCachedDetail(id, user?.id);
         if (cancelled || loadedOnceRef.current || !cached) return;
         setIncident(cached.incident as Incident);
-        setComments((cached.comments ?? []) as CommentItem[]);
+        setComments((cached.comments ?? []) as CommentItemLike[]);
         setMyConfirmation(cached.my_confirmation ?? null);
         setCachedFetchedAt(cached.fetched_at);
         loadedOnceRef.current = true;
@@ -270,12 +277,12 @@ export default function IncidentPage() {
 
         const data = (await res.json()) as {
           incident: Incident;
-          comments?: CommentItem[];
+          comments?: CommentItemLike[];
           my_confirmation?: { response: "yes" | "no"; at: string } | null;
         };
         if (isCancelled()) return;
         setIncident(data.incident);
-        setComments(data.comments ?? []);
+        setComments((data.comments ?? []) as CommentItemLike[]);
         setMyConfirmation(data.my_confirmation ?? null);
         loadedOnceRef.current = true;
         errorShownRef.current = false;
@@ -308,11 +315,11 @@ export default function IncidentPage() {
           if (!res.ok) return;
           const data = (await res.json()) as {
             incident: Incident;
-            comments?: CommentItem[];
+            comments?: CommentItemLike[];
             my_confirmation?: { response: "yes" | "no"; at: string } | null;
           };
           setIncident(data.incident);
-          setComments(data.comments ?? []);
+          setComments((data.comments ?? []) as CommentItemLike[]);
           setMyConfirmation(data.my_confirmation ?? null);
           loadedOnceRef.current = true;
         } catch { /* ignore */ }
@@ -405,10 +412,89 @@ export default function IncidentPage() {
         await putCachedDetail(id, data.incident, comments, user?.id, data.my_confirmation ?? null);
       } catch { /* best-effort */ }
       setNotice(data.message ?? (data.already_confirmed ? "You already responded to this hazard." : "Thanks — your response was recorded."));
+      if (!data.already_confirmed) toast("Confirmation recorded");
     } catch {
       setActionError("Network problem — please try again.");
+      toast("Network problem — please try again.", "error");
     } finally {
       setConfirming(false);
+    }
+  };
+
+  const toggleLike = async (commentId: string, currentlyLiked: boolean) => {
+    if (!user) {
+      setActionError("Please sign in to react to comments.");
+      return;
+    }
+    setActionError(null);
+    // Offline: queue the reaction so it survives a dropped connection.
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      const { enqueue, newOutboxId } = await import("@/lib/offline-db");
+      await enqueue({
+        id: newOutboxId(),
+        kind: "like" as OutboxKind,
+        incident_id: id,
+        payload: { comment_id: commentId, liked: currentlyLiked ? false : true },
+        created_at: new Date().toISOString(),
+        state: "pending",
+        attempts: 0,
+      });
+      const nextComments = comments.map((c) =>
+        c.id !== commentId
+          ? c
+          : {
+              ...c,
+              liked_by_me: !currentlyLiked,
+              like_count: currentlyLiked ? Math.max(0, (c.like_count ?? 0) - 1) : (c.like_count ?? 0) + 1,
+            } as CommentItemLike,
+      );
+      setComments(nextComments);
+      try {
+        const { putCachedDetail } = await import("@/lib/offline-db");
+        await putCachedDetail(id, incident, nextComments, user?.id, myConfirmation);
+      } catch { /* best-effort */ }
+      setNotice("Saved offline — your reaction will sync when you're back online.");
+      return;
+    }
+    try {
+      let res = await authFetch(`/api/incidents/${id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "like", comment_id: commentId }),
+      });
+      if (res.status === 401 && !getAuthToken()) {
+        await new Promise((r) => setTimeout(r, 350));
+        if (getAuthToken()) {
+          res = await authFetch(`/api/incidents/${id}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "like", comment_id: commentId }),
+          });
+        }
+      }
+      const data = await res.json();
+      if (res.status === 401) {
+        setActionError("Your session has expired. Please sign in again to react to comments.");
+        return;
+      }
+      if (!res.ok) {
+        setActionError(data.error ?? "Could not record your reaction.");
+        return;
+      }
+      setComments((c) =>
+        c.map((x) =>
+          x.id !== commentId
+            ? x
+            : {
+                ...x,
+                liked_by_me: data.liked,
+                like_count: data.count,
+              } as CommentItemLike,
+        ),
+      );
+      setNotice("Reaction recorded.");
+    } catch {
+      setActionError("Network problem — please try again.");
     }
   };
 
@@ -442,8 +528,7 @@ export default function IncidentPage() {
         body: text,
         created_at: new Date().toISOString(),
         local_state: "pending",
-      };
-      const nextComments = [localComment, ...comments];
+      };        const nextComments = [localComment as CommentItemLike, ...comments];
       setComments(nextComments);
       setCommentText("");
       try {
@@ -481,10 +566,12 @@ export default function IncidentPage() {
         setActionError(data.error ?? "Could not post your comment.");
         return;
       }
-      setComments((c) => [data.comment as CommentItem, ...c]);
+      setComments((c) => [data.comment as CommentItemLike, ...c]);
       setCommentText("");
+      toast("Comment posted");
     } catch {
       setActionError("Network problem — please try again.");
+      toast("Could not post your comment", "error");
     } finally {
       setPostingComment(false);
     }
@@ -740,7 +827,7 @@ export default function IncidentPage() {
               </h2>
               {reviewOnly && (
                 <p className="mt-1.5 text-[12.5px] leading-relaxed muted">
-                  Not in the public feed yet. Two independent first-hand confirmations publish it.
+                  Not in the public feed yet. Independent community observations help corroborate reports that need review.
                 </p>
               )}
 
@@ -767,9 +854,9 @@ export default function IncidentPage() {
                     </p>
                     <p className="mt-0.5 text-[12.5px]" style={{ color: "var(--low)" }}>
                       {myConfirmation.response === "yes"
-                        ? "You confirmed this hazard is still present."
-                        : "You reported this hazard as cleared."}{" "}
-                      ({fmtAge(minutesSince(myConfirmation.at))}) One response per person is counted.
+                        ? "You observed that this hazard is still present."
+                        : "You reported that this hazard is no longer present."}{" "}
+                      ({fmtAge(minutesSince(myConfirmation.at))}) One response per person is recorded.
                     </p>
                   </div>
                 </div>
@@ -785,7 +872,7 @@ export default function IncidentPage() {
                     {confirming && <Spinner className="mx-auto h-4 w-4" />}
                   </div>
                   <p className="mt-2 text-[11.5px] faint">
-                    One response per person. Confirm only what you can directly observe.
+                    One response per person. Confirm only what you can personally observe.
                   </p>
                 </>
               ) : (
@@ -941,14 +1028,21 @@ export default function IncidentPage() {
                     <span className="text-[11px] faint sm:order-first">
                       {commentText.length}/600 · posted as {user?.display_name}
                     </span>
-                    <button
-                      type="submit"
-                      disabled={postingComment || !commentText.trim()}
-                      className="btn btn-primary w-full justify-center sm:w-auto"
-                    >
-                      {postingComment ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <SendHorizontal className="h-3.5 w-3.5" aria-hidden />}
-                      Post update
-                    </button>
+                    <div className="relative">
+                      <button
+                        type="submit"
+                        disabled={postingComment || !commentText.trim()}
+                        className="btn btn-primary w-full justify-center sm:w-auto"
+                      >
+                        {postingComment ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <SendHorizontal className="h-3.5 w-3.5" aria-hidden />}
+                        Post update
+                      </button>
+                      {user?.id === incident.reporter_id && (
+                        <p className="mt-1.5 text-[11px] faint">
+                          You submitted this report — your own observations can&apos;t corroborate it.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </form>
               ) : (
@@ -986,6 +1080,18 @@ export default function IncidentPage() {
                           <span className="chip chip-neutral !text-[10px]" title="Saved on this device — waiting to sync">
                             Pending sync
                           </span>
+                        )}
+                        {c.like_count !== undefined && (
+                          <button
+                            type="button"
+                            onClick={() => toggleLike(c.id, c.liked_by_me ?? false)}
+                            className="inline-flex items-center gap-1 text-[11px] font-medium"
+                            style={{ color: c.liked_by_me ? "var(--warn)" : "var(--text-2)" }}
+                            aria-label={c.liked_by_me ? "You liked this comment" : "Like this comment"}
+                          >
+                            <Heart className="h-3.5 w-3.5" aria-hidden />
+                            {c.liked_by_me ? "♥" : "♡"} {c.like_count}
+                          </button>
                         )}
                         <span className="text-[11px] faint">{fmtAge(minutesSince(c.created_at))}</span>
                         {user && c.user_id === user.id && (

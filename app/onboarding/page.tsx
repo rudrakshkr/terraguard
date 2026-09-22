@@ -13,6 +13,7 @@ import {
   type ResolvedAddress,
 } from "@/hooks/useLocationPreference";
 import { Spinner } from "@/components/Spinner";
+import { toast } from "@/components/Toaster";
 
 /**
  * Post-login onboarding: profile details + location, then hand off to the
@@ -36,8 +37,14 @@ export default function OnboardingPage() {
     if (!loading && !authed) router.replace("/login?next=/onboarding");
   }, [loading, authed, router]);
 
-  // Prefill name from existing profile when the field is untouched.
+  // Returning user with an already-completed profile goes straight to the app.
+  useEffect(() => {
+    if (!loading && authed && user?.onboarded) {
+      router.replace("/home");
+    }
+  }, [loading, authed, user?.onboarded, router]);
 
+  // Prefill name from existing profile when the field is untouched.
   const [manualMode, setManualMode] = useState<"auto" | "manual">("auto");
   // Derived prefill: show existing profile name while the field stays editable.
   const nameValue = name || user?.display_name || "";
@@ -71,6 +78,7 @@ export default function OnboardingPage() {
       const data = (await res.json()) as { user?: typeof user; error?: string };
       if (!res.ok || !data.user) throw new Error(data.error ?? "Could not save your profile.");
       updateProfile(data.user);
+      toast("Profile setup complete");
       router.replace("/home");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save your profile.");

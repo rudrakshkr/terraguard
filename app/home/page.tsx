@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Clock3, Loader2, Navigation, Phone, ShieldCheck, Siren, WifiOff } from "lucide-react";
+import { Clock3, Loader2, Navigation, Phone, ShieldCheck, WifiOff } from "lucide-react";
 import type { Incident } from "@/lib/types";
 import { useAuth, authFetch } from "@/hooks/useAuth";
 import { haversineKm, freshnessOf } from "@/lib/geo";
@@ -224,10 +224,7 @@ export default function HomePage() {
         </div>
         <div className="flex flex-col gap-2.5 min-[420px]:flex-row sm:shrink-0">
           <Link href="/" className="btn btn-secondary">
-            <Navigation className="h-4 w-4" aria-hidden /> Public map
-          </Link>
-          <Link href="/report" className="btn btn-primary">
-            <Siren className="h-4 w-4" aria-hidden /> Report Hazard
+            <Navigation className="h-4 w-4" aria-hidden /> Nearby
           </Link>
         </div>
       </header>

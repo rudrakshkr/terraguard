@@ -65,6 +65,10 @@ async function send(item: OutboxItem): Promise<{ res: Response; data: Record<str
       url = `/api/incidents/${item.incident_id}`;
       body = { action: "confirm", ...(item.payload as { response: string }) };
       break;
+    case "like":
+      url = `/api/incidents/${item.incident_id}`;
+      body = { action: "like", comment_id: (item.payload as { comment_id?: string }).comment_id, ...(item.payload as { liked?: boolean }) };
+      break;
     case "comment":
       url = `/api/incidents/${item.incident_id}`;
       body = { action: "comment", client_id: item.id, ...(item.payload as { body: string }) };

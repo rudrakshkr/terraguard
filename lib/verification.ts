@@ -21,6 +21,13 @@ export interface VerificationResult {
   publication: "public" | "review_only" | "hidden";
   headline: string;
   explanation: string;
+  /**
+   * True when the submitted evidence contradicts itself (photo vs description,
+   * or a large hazard-type disagreement). The community may still corroborate
+   * the report, but the count alone must never publish it — see
+   * lib/community-policy.ts.
+   */
+  has_contradiction: boolean;
 }
 
 /**
@@ -159,6 +166,7 @@ export function verifyReport(input: {
 
   /* --------------------------- image ↔ hazard-type match ----------------------- */
   const declaredType = (input.hazardType ?? a.incident_type) as string;
+  let typeMismatch = false;
   if (input.hazardType && a.incident_type && input.hazardType !== a.incident_type) {
     const siblings: Record<string, string[]> = {
       Landslide: ["Road Blockage"],
@@ -168,6 +176,7 @@ export function verifyReport(input: {
       Flood: ["Flash Flood"],
     };
     const isSibling = (siblings[declaredType] ?? []).includes(a.incident_type);
+    typeMismatch = !isSibling;
     // A type mismatch — even a large one — is a review signal, not a hard fail.
     // Reporters often observe a hazard differently from how the model labels it.
     add(
@@ -286,6 +295,11 @@ export function verifyReport(input: {
    */
   const hardReject = (!hasText && !hasImage) || (gibberish && !hasImage);
 
+  // Evidence that contradicts itself is an "unresolved contradiction": the
+  // report stays alive for review, but community observations alone can never
+  // publish it (lib/community-policy.ts checks this flag).
+  const hasContradiction = contradiction || typeMismatch;
+
   if (hardReject) {
     return {
       status: "rejected",
@@ -294,6 +308,7 @@ export function verifyReport(input: {
       corroboration: corroborationInfo,
       publication: "hidden",
       headline: "NOT PUBLISHED",
+      has_contradiction: false,
       explanation:
         "This submission contains no usable evidence, so there is nothing that could be assessed or reviewed. If this is a real emergency, call 112.",
     };
@@ -315,6 +330,7 @@ export function verifyReport(input: {
       corroboration: corroborationInfo,
       publication: "review_only",
       headline: "NEEDS REVIEW",
+      has_contradiction: hasContradiction,
       explanation:
         "The report has been saved, but the evidence needs community or human review before it is shown as a live alert." +
         (reviewFocus.length ? ` Needs review: ${reviewFocus.slice(0, 4).join(", ")}.` : "") +
@@ -329,6 +345,7 @@ export function verifyReport(input: {
     corroboration: corroborationInfo,
     publication: "public",
     headline: "AI CHECK PASSED",
+    has_contradiction: hasContradiction,
     explanation:
       "The submitted evidence is internally consistent and no conflicts were found. Published as a public alert for nearby users. This is an evidence check, not a judgement about the reporter.",
   };

@@ -6,11 +6,13 @@
  *   B. another authenticated user can
  *   C. anonymous (no session) cannot
  *   D. one confirmation per user is enforced (repeats are not counted twice)
- *   E. two independent users satisfy the publication threshold
+ *   E. the publication threshold is three independent non-reporter confirmations
+ *      (two alone is not enough)
  *   F. corroboration is independent per user (a "cleared" vote never publishes)
  *   G. the reporter's own response can NEVER contribute to the threshold —
  *      even as legacy data written before the rule existed
  *   H. NEEDS REVIEW stays out of the public feed until the threshold is met
+ *   I. a already-corroborated report remains published and leaves the review queue
  *
  * The API route enforces the same rule by calling canConfirmHazard() before it
  * touches the store, so a direct API request cannot bypass it.
@@ -114,7 +116,7 @@ async function suitePolicy() {
   console.log("\n—— policy: who may confirm, and when a report becomes public ——");
   const p = await import(`${OUT}/community-policy.js`);
 
-  check("threshold is two independent confirmations", p.PUBLICATION_THRESHOLD === 2);
+  check("threshold is three independent observations", p.PUBLICATION_THRESHOLD === 3);
 
   const own = { reporter_id: "user-1" };
   const anon = p.canConfirmHazard(own, null);
@@ -135,14 +137,15 @@ async function suitePolicy() {
   const review = { publication: "review_only", verification: "needs_review" };
   check("review-only detection", p.isReviewOnly(review) === true);
   check("published reports are not review-only", p.isReviewOnly({ publication: "public", verification: "needs_review" }) === false);
-  check("one independent confirmation is not enough", p.shouldPublishFromCorroboration(review, 1) === false);
-  check("two independent confirmations publish", p.shouldPublishFromCorroboration(review, 2) === true);
+  check("one independent observation is not enough", p.shouldPublishFromCorroboration(review, 1) === false);
+  check("two independent observations are not enough", p.shouldPublishFromCorroboration(review, 2) === false);
+  check("three independent observations publish", p.shouldPublishFromCorroboration(review, 3) === true);
   check(
     "seeded demo incidents never auto-publish",
     p.shouldPublishFromCorroboration({ ...review, origin: "seed" }, 5) === false,
   );
-  check("remaining count math", p.corroborationRemaining(0) === 2 && p.corroborationRemaining(1) === 1 && p.corroborationRemaining(3) === 0);
-  check("progress label caps at the threshold", p.corroborationProgressLabel(5) === "2 of 2 confirmations");
+  check("remaining count math", p.corroborationRemaining(0) === 3 && p.corroborationRemaining(1) === 2 && p.corroborationRemaining(2) === 1 && p.corroborationRemaining(3) === 0);
+  check("progress label caps at the threshold", p.corroborationProgressLabel(5) === "3 of 3 observations");
 }
 
 /* ---------------------------- suite: corroboration -------------------------- */
@@ -193,23 +196,23 @@ async function suiteCorroboration() {
   const afterRepeat = await community.confirmationCounts(incident.id, { excludeUserId: reporter });
   check("D: the repeat did not inflate the count", afterRepeat.yes === 1, JSON.stringify(afterRepeat));
 
-  // G (part 2): the reporter's own vote does not publish the report.
-  const oneIndependent = await store.confirmIncident(incident.id, true, afterRepeat);
-  check(
-    "G: reporter's own confirmation does not publish (needs 2 independent)",
-    oneIndependent?.publication === "review_only",
-    String(oneIndependent?.publication),
-  );
-
-  // E: a second independent user satisfies the threshold.
+  // E: two independent users are still not enough.
   await community.recordConfirmation(incident.id, userC, "yes");
   const twoIndependent = await community.confirmationCounts(incident.id, { excludeUserId: reporter });
-  check("E: two independent confirmations counted", twoIndependent.yes === 2, JSON.stringify(twoIndependent));
-  const published = await store.confirmIncident(incident.id, true, twoIndependent);
-  check("E: two independent confirmations publish the report", published?.publication === "public");
+  check("E: two independent observations counted", twoIndependent.yes === 2, JSON.stringify(twoIndependent));
+  const stillNotEnough = await store.confirmIncident(incident.id, true, twoIndependent);
+  check("E: two independent observations do NOT publish the report", stillNotEnough?.publication === "review_only");
+
+  // E (continued): a third independent user satisfies the threshold.
+  const userD = await makeUser("919000000104", "Neighbour Four");
+  await community.recordConfirmation(incident.id, userD, "yes");
+  const threeIndependent = await community.confirmationCounts(incident.id, { excludeUserId: reporter });
+  check("E: three independent observations counted", threeIndependent.yes === 3, JSON.stringify(threeIndependent));
+  const published = await store.confirmIncident(incident.id, true, threeIndependent);
+  check("E: three independent observations publish the report", published?.publication === "public");
   check(
-    "G: publication reason counts the independent confirmations only",
-    (published?.verification_reasons ?? []).some((r) => r.includes("2 independent confirmations")),
+    "G: publication reason counts the independent observations only",
+    (published?.verification_reasons ?? []).some((r) => r.includes("3 independent")),
     JSON.stringify(published?.verification_reasons),
   );
 
@@ -228,6 +231,27 @@ async function suiteCorroboration() {
   const afterCleared = await store.confirmIncident(clearedReport.id, false, cleared);
   check("'cleared' responses never publish a review-only report", afterCleared?.publication === "review_only");
   check("and never auto-resolve one either", afterCleared?.status !== "Resolved", String(afterCleared?.status));
+
+  // A NEEDS REVIEW report with 3 still-present + a major unresolved evidence
+  // contradiction must not automatically become public.
+  const contradictoryReport = await store.addIncident(
+    incidentInput({
+      reporter_id: reporter,
+      evidence_contradiction: true,
+      verification_reasons: ["Image and description are not fully consistent."],
+      verification: "needs_review",
+      publication: "review_only",
+    }),
+  );
+  const contradictedCounts = { yes: 3, no: 0 };
+  const contradictoryOutcome = await store.confirmIncident(contradictoryReport.id, true, contradictedCounts);
+  check("3 still-present + unresolved evidence contradiction stays review-only", contradictoryOutcome?.publication === "review_only");
+  check(
+    "the contradiction gate is explained in plain language",
+    policy.corroborationStateLabel(contradictoryReport, 3).includes("still needs review"),
+  );
+  check("a clean 3-observation report is eligible", policy.corroborationStateLabel({ ...contradictoryReport, evidence_contradiction: false }, 3).includes("Eligible"));
+  check("2 still-present + 1 cleared is not eligible", policy.shouldPublishFromCorroboration({ ...contradictoryReport, evidence_contradiction: false }, 2) === false);
 
   // Confirmations are per-incident: the same user may confirm elsewhere.
   const otherIncident = await store.addIncident(incidentInput({ reporter_id: reporter, incident_type: "Rockfall" }));

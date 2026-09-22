@@ -12,8 +12,16 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET modes:
- *  - ?public=1               → public nearby feed; no auth required
- *  - ?community_review=1     → signed-in community review queue
+ *  - ?public=1                → public nearby feed; no auth required.
+ *                                 When ?lat/?lng are present, the response is
+ *                                 scoped to that location + radius.
+ *  - ?community_review=1      → signed-in nearby review queue. When ?lat/?lng
+ *                                 are present (e.g. from /map or /), the same
+ *                                 scope is applied so the "needs confirmation"
+ *                                 count is for the current location.
+ *  - ?mine=1                  → signed-in user's OWN reports (every state,
+ *                                 including review-only and unpublished ones).
+ *                                 Never exposes another member's reports.
  *  - default / ?dashboard=1  → operator-only operational data
  */
 export async function GET(req: NextRequest) {
@@ -21,13 +29,16 @@ export async function GET(req: NextRequest) {
     const sp = req.nextUrl.searchParams;
     const isPublic = sp.get("public") === "1";
     const isCommunityReview = sp.get("community_review") === "1";
+    const isMine = sp.get("mine") === "1";
+    let requester: Awaited<ReturnType<typeof userFromRequest>> = null;
 
     if (!isPublic) {
       const user = await userFromRequest(req);
+      requester = user;
       if (!user) {
         return NextResponse.json({ error: "Sign in required." }, { status: 401 });
       }
-      if (!isCommunityReview && !isOperatorUser(user)) {
+      if (!isCommunityReview && !isMine && !isOperatorUser(user)) {
         return NextResponse.json({ error: "Operator access required." }, { status: 403 });
       }
     }
@@ -42,11 +53,16 @@ export async function GET(req: NextRequest) {
       communityReview: isCommunityReview,
     });
 
-    if (isPublic) {
-      const lat = Number.parseFloat(sp.get("lat") ?? "");
-      const lng = Number.parseFloat(sp.get("lng") ?? "");
-      const radius = Number.parseFloat(sp.get("radius_km") ?? "50");
-      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    // Geographic scope: applied to BOTH the public feed and the community
+    // review queue, so a "needs confirmation" count can never come from a
+    // different place than the alerts shown beside it.
+    const lat = Number.parseFloat(sp.get("lat") ?? "");
+    const lng = Number.parseFloat(sp.get("lng") ?? "");
+    const radius = Number.parseFloat(sp.get("radius_km") ?? "50");
+    const scoped = Number.isFinite(lat) && Number.isFinite(lng);
+
+    if (isPublic || isCommunityReview) {
+      if (scoped) {
         incidents = incidents
           .map((i) => ({ incident: i, d: haversineKm(lat, lng, i.lat, i.lng) }))
           .filter((r) => r.d <= radius)
@@ -57,6 +73,16 @@ export async function GET(req: NextRequest) {
             distance_label: fmtDistance(r.d),
           }));
       }
+      if (isCommunityReview) {
+        incidents = incidents.filter(
+          (i) => i.publication === "review_only" && i.verification === "needs_review",
+        );
+      }
+    }
+
+    // Own-report view: strictly the caller's own submissions, every state.
+    if (isMine && requester) {
+      incidents = incidents.filter((i) => i.reporter_id === requester!.id);
     }
 
     const withCounts = await commentCountsFor(incidents);
@@ -222,6 +248,7 @@ export async function POST(req: NextRequest) {
       status_history: [{ status: "Open", at: now }],
       verification: result.verification.status,
       verification_reasons: result.verification.reasons,
+      evidence_contradiction: result.verification.has_contradiction,
       publication: result.verification.publication,
       reporter_label: "Community report",
       reporter_id: user.id,

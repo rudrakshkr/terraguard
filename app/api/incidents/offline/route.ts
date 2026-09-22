@@ -151,6 +151,7 @@ export async function POST(req: NextRequest) {
       status_history: [{ status: "Open", at: now }],
       verification: result.verification.status,
       verification_reasons: result.verification.reasons,
+      evidence_contradiction: result.verification.has_contradiction,
       publication: result.verification.publication,
       reporter_label: "Community report",
       reporter_id: user.id,

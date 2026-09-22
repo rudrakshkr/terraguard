@@ -122,6 +122,9 @@ export interface Incident {
   /* --- community verification layer --- */
   verification?: VerificationStatus;
   verification_reasons?: string[];
+  /** True when the submitted evidence contradicts itself (e.g. photo vs text).
+   *  Community observations alone can never publish a report in this state. */
+  evidence_contradiction?: boolean;
   publication?: Publication; // public | review_only | hidden
   reporter_label?: string; // "Community report" — never a real identity
   last_confirmed_at?: string; // community "still present" confirmations

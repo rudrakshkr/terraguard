@@ -110,7 +110,7 @@ export default function CommunityReviewPage() {
           <h1 className="mt-2 text-3xl font-bold tracking-tight">Help verify reports near you.</h1>
           <p className="mt-2 max-w-2xl text-[14px] leading-relaxed muted">
             These reports were saved but could not be automatically verified. Confirm only hazards you can directly observe.
-            Two independent “yes” confirmations can move a review-only report into the public alert feed.
+            At least three independent “still present” observations can move a review-only report into the public alert feed.
           </p>
         </div>
         <button onClick={() => void load()} className="btn btn-secondary sm:shrink-0">

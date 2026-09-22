@@ -9,6 +9,9 @@ import {
   addComment,
   deleteComment,
   withAuthorProfiles,
+  hasLikedComment,
+  toggleCommentLike,
+  likeCountsFor,
 } from "@/lib/community-store";
 import { userFromRequest, getUserById, isOperatorUser } from "@/lib/auth";
 import { persistenceConfigError } from "@/lib/kv";
@@ -35,7 +38,14 @@ export async function GET(
       return NextResponse.json({ error: "Incident not found." }, { status: 404 });
     }
 
-    const rawComments = await listComments(id);
+  const rawComments = await listComments(id);    const likeCounts = await likeCountsFor(rawComments);
+    // Load the current user's like state for the visible comments in one batch.
+    const myLikes = user
+      ? (await Promise.allSettled(
+          rawComments.map((c) => hasLikedComment(c.id, user.id)),
+        )).map((r) => (r.status === "fulfilled" ? r.value : null))
+      : [];
+
     const nameCache = new Map<string, string>();
     const avatarCache = new Map<string, string | null>();
     const authorIds = [...new Set(rawComments.map((c) => c.user_id))];
@@ -47,6 +57,10 @@ export async function GET(
     const comments = withAuthorProfiles(rawComments, (uid) => ({
       display_name: nameCache.get(uid) ?? "HillSense user",
       avatar_url: avatarCache.get(uid) ?? null,
+    })).map((c, idx) => ({
+      ...c,
+      like_count: likeCounts[c.id] ?? 0,
+      liked_by_me: user ? (myLikes[idx] ?? false) : false,
     }));
 
     const mine = user ? await hasConfirmed(id, user.id) : null;
@@ -65,9 +79,10 @@ export async function GET(
 }
 
 /**
- * POST — two authenticated actions:
+ * POST — authenticated community actions on an incident:
  *   { action: "confirm", response: "yes" | "no" }  → one-per-user confirmation
- *   { action: "comment", body: string }            → add a community comment
+ *   { action: "comment", body: string }             → add a community comment
+ *   { action: "like", comment_id: string }          → toggle comment like
  */
 export async function POST(
   req: NextRequest,
@@ -94,8 +109,9 @@ export async function POST(
     }
 
     const body = (await req.json()) as {
-      action?: string;
-      response?: string;
+      action?: "confirm" | "comment" | "like";
+      response?: "yes" | "no";
+      comment_id?: string;
       confirmed?: boolean; // legacy shape
       body?: string;
       client_id?: string; // offline-outbox idempotency key
@@ -134,8 +150,8 @@ export async function POST(
             incident,
             message:
               record.response === "yes"
-                ? "You already confirmed this hazard is still present."
-                : "You already reported this hazard as cleared.",
+                ? "You already observed that this hazard is still present."
+                : "You already reported this hazard as no longer present.",
           },
           { status: 200 },
         );
@@ -160,8 +176,8 @@ export async function POST(
         message: communityPublished
           ? "This report has been published after independent community corroboration."
           : response === "yes"
-            ? "Thanks. Your confirmation was recorded."
-            : "Thanks. Your update was recorded.",
+            ? "Thanks — your observation was recorded."
+            : "Thanks — your update was recorded. One response per person is counted.",
       });
     }
 
@@ -181,7 +197,26 @@ export async function POST(
         display_name: user.display_name || "HillSense user",
         avatar_url: user.avatar_url ?? null,
       }))[0];
-      return NextResponse.json({ comment }, { status: 201 });
+      return NextResponse.json({ comment, like_count: 0, liked_by_me: false }, { status: 201 });
+    }
+
+    /* ------------------------------- comment likes ----------------------------- */
+    if (body.action === "like") {
+      if (!user) {
+        return NextResponse.json({ error: "Please sign in to react to comments." }, { status: 401 });
+      }
+      const result = await toggleCommentLike(
+        body.comment_id ?? "",
+        user.id,
+        typeof body.client_id === "string" && body.client_id.trim() ? body.client_id.trim().slice(0, 80) : undefined,
+      );
+      if (!result.ok) {
+        return NextResponse.json({ error: result.error }, { status: 400 });
+      }
+      return NextResponse.json(
+        { liked: result.liked, count: result.count },
+        { status: 200 },
+      );
     }
 
     return NextResponse.json({ error: "Unknown action." }, { status: 400 });

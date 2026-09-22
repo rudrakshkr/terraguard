@@ -12,11 +12,8 @@
  * review-only reports, not whether the reporter can keep using their account.
  */
 
-import type { Incident } from "./types";
-
-/** Independent first-hand confirmations required to publish a review-only report. */
-export const PUBLICATION_THRESHOLD = 2;
-
+import type { Incident } from "./types";/** Independent first-hand observations required to publish a review-only report. */
+export const PUBLICATION_THRESHOLD = 3;
 export interface ConfirmDecisionAllowed {
   allowed: true;
 }
@@ -26,7 +23,6 @@ export interface ConfirmDecisionRejected {
   code: "sign_in_required" | "own_report";
   reason: string; // user-facing explanation
 }
-
 export type ConfirmDecision = ConfirmDecisionAllowed | ConfirmDecisionRejected;
 
 /**
@@ -54,7 +50,7 @@ export function canConfirmHazard(
       status: 403,
       code: "own_report",
       reason:
-        "You cannot confirm your own report. This hazard needs an independent first-hand observation.",
+        "This report is awaiting independent community confirmation. You cannot confirm your own report.",
     };
   }
   return { allowed: true };
@@ -67,7 +63,7 @@ export function isReviewOnly(
   return incident.publication === "review_only" && incident.verification === "needs_review";
 }
 
-/** How many more independent confirmations a review-only report still needs. */
+/** How many more independent observations a review-only report still needs. */
 export function corroborationRemaining(yesCount: number): number {
   return Math.max(0, PUBLICATION_THRESHOLD - Math.max(0, yesCount));
 }
@@ -77,20 +73,45 @@ export function corroborationRemaining(yesCount: number): number {
  * community members corroborated it?
  */
 export function shouldPublishFromCorroboration(
-  incident: Pick<Incident, "publication" | "verification" | "origin">,
+  incident: Pick<Incident, "publication" | "verification" | "origin" | "evidence_contradiction">,
   independentYesCount: number,
 ): boolean {
   return (
     isReviewOnly(incident) &&
     incident.origin !== "seed" &&
+    // A count is a minimum, never a truth score: observations cannot publish a
+    // report whose submitted evidence still contradicts itself.
+    incident.evidence_contradiction !== true &&
     independentYesCount >= PUBLICATION_THRESHOLD
   );
 }
 
 /**
- * Progress line shown next to a review card, e.g. "1 of 2 confirmations".
+ * Explain the publication gate in plain language (surfaced to the UI and the
+ * Command Center so an operator can see WHY a report is or is not public).
+ */
+export function corroborationStateLabel(
+  incident: Pick<Incident, "publication" | "verification" | "evidence_contradiction">,
+  independentYesCount: number,
+  clearedCount = 0,
+): string {
+  if (!isReviewOnly(incident)) return "Not in review";
+  const yes = Math.max(0, independentYesCount);
+  if (incident.evidence_contradiction === true && yes >= PUBLICATION_THRESHOLD) {
+    return "Community observations are present, but the submitted evidence still needs review.";
+  }
+  if (clearedCount > 0) {
+    return `${yes} independent observation${yes === 1 ? "" : "s"} and ${clearedCount} cleared response${clearedCount === 1 ? "" : "s"} — additional corroboration needed.`;
+  }
+  if (yes === 0) return "Awaiting independent community observations.";
+  if (yes >= PUBLICATION_THRESHOLD) return "Eligible for publication from community corroboration.";
+  return `${yes} independent observation${yes === 1 ? "" : "s"} received — additional corroboration needed.`;
+}
+
+/**
+ * Progress line shown next to a review card, e.g. "1 of 3 observations".
  */
 export function corroborationProgressLabel(yesCount: number): string {
   const yes = Math.max(0, yesCount);
-  return `${Math.min(yes, PUBLICATION_THRESHOLD)} of ${PUBLICATION_THRESHOLD} confirmations`;
+  return `${Math.min(yes, PUBLICATION_THRESHOLD)} of ${PUBLICATION_THRESHOLD} observations`;
 }

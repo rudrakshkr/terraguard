@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Mountain, Sun, Moon, MapPin, Siren, LayoutDashboard, MessageCircleQuestion, Map,
-  LogIn, LogOut, User as UserIcon, Home,
+  LogIn, LogOut, User as UserIcon, Home, ClipboardList,
 } from "lucide-react";
 import { useTheme } from "@/hooks/useTheme";
 import { useLocationPreference } from "@/hooks/useLocationPreference";
@@ -14,9 +14,15 @@ const LINKS = [
   { href: "/", label: "Nearby", icon: Mountain },
   { href: "/home", label: "My Feed", icon: Home },
   { href: "/report", label: "Report Hazard", icon: Siren },
-  { href: "/dashboard", label: "Map", icon: Map },
+  { href: "/map", label: "Map", icon: Map },
   { href: "/ask", label: "Ask HillSense", icon: MessageCircleQuestion },
 ];
+
+const COMMAND_CENTER_LINK = {
+  href: "/dashboard",
+  label: "Command Center",
+  icon: LayoutDashboard,
+};
 
 /** Short, deterministic label for the header location pill. */
 function headerLocationLabel(label: string): string {
@@ -86,14 +92,18 @@ export default function Navbar() {
             </span>
           )}
 
-          <Link
-            href="/dashboard"
-            className="btn btn-ghost btn-header-sm btn-icon hidden xl:inline-flex"
-            aria-label="Operations monitoring & triage"
-            title="Operations monitoring & triage"
-          >
-            <LayoutDashboard className="h-4 w-4" />
-          </Link>
+          {/* Command Center — only ever rendered for authorized operators. */}
+          {user?.is_operator && (
+            <Link
+              href={COMMAND_CENTER_LINK.href}
+              className="btn btn-ghost btn-header-sm hidden xl:inline-flex"
+              aria-label={COMMAND_CENTER_LINK.label}
+              title={COMMAND_CENTER_LINK.label}
+            >
+              <COMMAND_CENTER_LINK.icon className="h-4 w-4" />
+              <span className="hidden whitespace-nowrap lg:inline">Command Center</span>
+            </Link>
+          )}
 
           <button
             onClick={toggle}
@@ -108,12 +118,15 @@ export default function Navbar() {
             <span className="h-8 w-8 animate-pulse rounded-lg xl:h-9 xl:w-9" style={{ background: "var(--surface-2)" }} aria-hidden />
           ) : authed && user ? (
             <>
-              <Link
-                href="/profile"
-                className="flex h-8 items-center gap-1.5 rounded-lg border py-0 pl-1 pr-2 text-[12px] font-semibold xl:h-9 xl:gap-2 xl:pl-1.5 xl:pr-2.5 xl:text-[12.5px]"
-                style={{ borderColor: "var(--border)", color: "var(--text)" }}
-                title={`Your profile — signed in as ${user.display_name}`}
-              >
+              {/* Account menu: Profile, My Reports, Sign out. Keeps the header
+                  to a single control per surface on phones. */}
+              <details className="relative">
+                <summary
+                  className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-lg border py-0 pl-1 pr-2 text-[12px] font-semibold xl:h-9 xl:gap-2 xl:pl-1.5 xl:pr-2.5 xl:text-[12.5px]"
+                  style={{ borderColor: "var(--border)", color: "var(--text)" }}
+                  title={`Account — signed in as ${user.display_name}`}
+                  aria-label="Account menu"
+                >
                 {user.avatar_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -127,19 +140,45 @@ export default function Navbar() {
                     {user.initials}
                   </span>
                 )}
-                <span className="hidden max-w-[110px] truncate xl:inline">{user.display_name.split(" ")[0]}</span>
-              </Link>
-              <button
-                onClick={async () => {
-                  await signOut();
-                  router.push("/");
-                }}
-                className="btn btn-ghost btn-header-sm btn-icon"
-                aria-label="Sign out"
-                title="Sign out"
-              >
-                <LogOut className="h-4 w-4" />
-              </button>
+                  <span className="hidden max-w-[110px] truncate xl:inline">{user.display_name.split(" ")[0]}</span>
+                </summary>
+                <div
+                  className="absolute right-0 z-50 mt-1 w-52 rounded-lg border p-1"
+                  style={{ background: "var(--surface)", borderColor: "var(--border)", boxShadow: "var(--shadow-card)" }}
+                >
+                  <span className="block truncate px-3 py-1.5 text-[11px] faint">Signed in as {user.display_name}</span>
+                  <Link
+                    href="/profile"
+                    className="flex items-center gap-2 rounded-md px-3 py-2 text-[13px] hover:bg-[var(--surface-2)]"
+                  >
+                    <UserIcon className="h-4 w-4" aria-hidden /> Profile
+                  </Link>
+                  <Link
+                    href="/my-reports"
+                    className="flex items-center gap-2 rounded-md px-3 py-2 text-[13px] hover:bg-[var(--surface-2)]"
+                  >
+                    <ClipboardList className="h-4 w-4" aria-hidden /> My Reports
+                  </Link>
+                  {user.is_operator && (
+                    <Link
+                      href={COMMAND_CENTER_LINK.href}
+                      className="flex items-center gap-2 rounded-md px-3 py-2 text-[13px] hover:bg-[var(--surface-2)] md:hidden"
+                    >
+                      <LayoutDashboard className="h-4 w-4" aria-hidden /> Command Center
+                    </Link>
+                  )}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await signOut();
+                      router.push("/");
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-[13px] hover:bg-[var(--surface-2)]"
+                  >
+                    <LogOut className="h-4 w-4" aria-hidden /> Sign out
+                  </button>
+                </div>
+              </details>
             </>
           ) : (              <Link href="/login" className="btn btn-secondary btn-header-sm max-sm:min-w-0 max-sm:!px-2" title="Sign in with your phone number">
                 <LogIn className="h-4 w-4" />

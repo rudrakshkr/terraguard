@@ -33,12 +33,19 @@ export interface CommentRecord {
   client_id?: string; // outbox idempotency key — replay protection for synced offline comments
 }
 
+export interface CommentLikeRecord {
+  comment_id: string;
+  user_id: string;
+  at: string;
+}
+
 interface CommunityDb {
   confirmations: ConfirmationRecord[];
   comments: CommentRecord[];
+  comment_likes: CommentLikeRecord[];
 }
 
-const EMPTY: CommunityDb = { confirmations: [], comments: [] };
+const EMPTY: CommunityDb = { confirmations: [], comments: [], comment_likes: [] };
 let db: CommunityDb | null = null;
 
 async function fallback(): Promise<CommunityDb> {
@@ -82,17 +89,25 @@ async function loadDb(): Promise<CommunityDb> {
  * collapses any historical duplicates (earliest response wins) so counts can
  * never be inflated by pre-existing data.
  */
-function migrate(d: CommunityDb): CommunityDb {
-  const seen = new Set<string>();
-  const confirmations: ConfirmationRecord[] = [];
-  for (const c of d.confirmations ?? []) {
-    const key = `${c.incident_id}\u0000${c.user_id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    confirmations.push(c);
-  }
-  if (confirmations.length === (d.confirmations ?? []).length) return d;
-  return { ...d, confirmations };
+function migrate(d: CommunityDb): CommunityDb {    const seen = new Set<string>();
+    const confirmations: ConfirmationRecord[] = [];
+    for (const c of d.confirmations ?? []) {
+      const key = `${c.incident_id}\u0000${c.user_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      confirmations.push(c);
+    }
+    const likeSeen = new Set<string>();
+    const comment_likes: CommentLikeRecord[] = [];
+    for (const l of d.comment_likes ?? []) {
+      const key = `${l.comment_id}\u0000${l.user_id}`;
+      if (likeSeen.has(key)) continue;
+      likeSeen.add(key);
+      comment_likes.push(l);
+    }
+    if (confirmations.length === (d.confirmations ?? []).length &&
+        comment_likes.length === (d.comment_likes ?? []).length) return d;
+    return { ...d, confirmations, comment_likes };
 }
 
 /**
@@ -310,7 +325,64 @@ export function corroboratingReportsFor(incident: Incident, pool: Incident[]): n
   ).length;
 }
 
-/** Wipe all confirmations and comments (admin reset). */
+/* ---------------------------- comment likes ----------------------------- */
+
+export async function hasLikedComment(commentId: string, userId: string): Promise<CommentLikeRecord | null> {
+  const d = await loadDb();
+  return d.comment_likes.find((l) => l.comment_id === commentId && l.user_id === userId) ?? null;
+}
+
+export async function toggleCommentLike(
+  commentId: string,
+  userId: string,
+  /** Client-generated idempotency key from the offline outbox (optional). */
+  clientId?: string,
+): Promise<{ ok: true; liked: boolean; count: number } | { ok: false; error: string }> {
+  return mutate<{ ok: boolean; liked?: boolean; count?: number; error?: string }>((d) => {
+    // Idempotent replay for offline outbox retries.
+    if (clientId) {
+      const existing = d.comment_likes.find((l) => l.user_id === userId && l.comment_id === commentId);
+      if (existing) return { doc: d, result: { ok: true, liked: true, count: countFor(d, commentId) } };
+    }
+    const idx = d.comment_likes.findIndex((l) => l.comment_id === commentId && l.user_id === userId);
+    if (idx >= 0) {
+      // Unlike — remove the one record for this user.
+      const likes = [...d.comment_likes];
+      likes.splice(idx, 1);
+      return { doc: { ...d, comment_likes: likes }, result: { ok: true, liked: false, count: countFor(d, commentId) - 1 } };
+    }
+    const like: CommentLikeRecord = {
+      comment_id: commentId,
+      user_id: userId,
+      at: new Date().toISOString(),
+    };
+    return { doc: { ...d, comment_likes: [...d.comment_likes, like] }, result: { ok: true, liked: true, count: countFor(d, commentId) + 1 } };
+  }).then((r) =>
+    r.ok
+      ? { ok: true as const, liked: r.liked as boolean, count: r.count as number }
+      : { ok: false as const, error: r.error ?? "Could not record your reaction." },
+  );
+}
+
+function countFor(d: CommunityDb, commentId: string): number {
+  return d.comment_likes.filter((l) => l.comment_id === commentId).length;
+}
+
+export async function likeCountsFor(comments: { id: string }[]): Promise<Record<string, number>> {
+  try {
+    const d = await loadDb();
+    const counts: Record<string, number> = {};
+    for (const c of comments) counts[c.id] = 0;
+    for (const l of d.comment_likes ?? []) {
+      if (counts[l.comment_id] !== undefined) counts[l.comment_id] += 1;
+    }
+    return counts;
+  } catch {
+    return {};
+  }
+}
+
+/** Wipe all confirmations, comments and likes (admin reset). */
 export async function resetCommunity(): Promise<void> {
   if (kvMode !== "file") {
     await kvMutate<CommunityDb, void>(KV_KEY, async () => ({ ...EMPTY }), async () => ({ doc: { ...EMPTY }, result: undefined }));

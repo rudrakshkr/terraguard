@@ -164,6 +164,12 @@ export function useAuth() {
     setSession(null, null);
     setState("guest");
     setUser(null);
+    try {
+      const { toast } = await import("@/components/Toaster");
+      toast("Signed out");
+    } catch {
+      /* toaster unavailable */
+    }
   }, []);
 
   const updateProfile = useCallback((user: AuthUser) => {
@@ -172,7 +178,9 @@ export function useAuth() {
     setState("authed");
   }, []);
 
-  return { user, state, authed: state === "authed", loading: state === "loading", signIn, signOut, updateProfile };
+  const isOnboarded = useCallback(() => cachedUser?.onboarded === true, []);
+
+  return { user, state, authed: state === "authed", loading: state === "loading", signIn, signOut, updateProfile, isOnboarded };
 }
 
 export function getAuthToken(): string | null {

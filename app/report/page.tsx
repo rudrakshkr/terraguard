@@ -18,6 +18,7 @@ import EvidencePanel from "@/components/EvidencePanel";
 import SourcesPanel from "@/components/SourcesPanel";
 import { SeverityChip, ModeBadge, EvidenceChip } from "@/components/Badge";
 import { Spinner } from "@/components/Spinner";
+import { toast } from "@/components/Toaster";
 
 /** Downscale large photos in the browser so uploads stay fast. */
 async function prepareImage(file: File): Promise<File> {
@@ -339,8 +340,14 @@ export default function ReportPage() {
         setPhotoWarning(data.photo_warning);
         setSavedId(data.incident.id);
         setSaving(false);
+        toast("Report submitted (photo not attached)", "info");
         return;
       }
+      toast(
+        data.incident.verification === "needs_review"
+          ? "Report saved for community review"
+          : "Report submitted",
+      );
       router.push(`/incident/${data.incident.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save the report.");
