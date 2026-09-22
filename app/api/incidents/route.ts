@@ -2,25 +2,35 @@ import { NextRequest, NextResponse } from "next/server";
 import { listIncidents, addIncident } from "@/lib/store";
 import { LOCATIONS } from "@/lib/threat";
 import { findRelated, haversineKm, fmtDistance } from "@/lib/geo";
-import { userFromRequest, publicUser } from "@/lib/auth";
-import { analyzeIncident } from "@/lib/hillsense";
-import { putReportPhoto } from "@/lib/avatar-store";
+import { userFromRequest, publicUser, isOperatorUser } from "@/lib/auth";
 import { listComments, commentCountsFor } from "@/lib/community-store";
 import type { Incident, Severity } from "@/lib/types";
 
 export const runtime = "nodejs";
-// Never cache: incidents and community data must be live across all clients.
 export const dynamic = "force-dynamic";
 
 /**
- * GET — dashboard mode (default) or public nearby mode (?public=1&lat=&lng=&radius_km=).
- * Nearby mode returns only verified, published, active incidents, each annotated
- * with `distance_km` / `distance_label` relative to the requester.
+ * GET modes:
+ *  - ?public=1               → public nearby feed; no auth required
+ *  - ?community_review=1     → signed-in community review queue
+ *  - default / ?dashboard=1  → operator-only operational data
  */
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
     const isPublic = sp.get("public") === "1";
+    const isCommunityReview = sp.get("community_review") === "1";
+
+    if (!isPublic) {
+      const user = await userFromRequest(req);
+      if (!user) {
+        return NextResponse.json({ error: "Sign in required." }, { status: 401 });
+      }
+      if (!isCommunityReview && !isOperatorUser(user)) {
+        return NextResponse.json({ error: "Operator access required." }, { status: 403 });
+      }
+    }
+
     let incidents = await listIncidents({
       severity: sp.get("severity") ?? undefined,
       type: sp.get("type") ?? undefined,
@@ -28,17 +38,16 @@ export async function GET(req: NextRequest) {
       location: sp.get("location") ?? undefined,
       q: sp.get("q") ?? undefined,
       public: isPublic,
+      communityReview: isCommunityReview,
     });
+
     if (isPublic) {
       const lat = Number.parseFloat(sp.get("lat") ?? "");
       const lng = Number.parseFloat(sp.get("lng") ?? "");
       const radius = Number.parseFloat(sp.get("radius_km") ?? "50");
       if (Number.isFinite(lat) && Number.isFinite(lng)) {
         incidents = incidents
-          .map((i) => ({
-            incident: i,
-            d: haversineKm(lat, lng, i.lat, i.lng),
-          }))
+          .map((i) => ({ incident: i, d: haversineKm(lat, lng, i.lat, i.lng) }))
           .filter((r) => r.d <= radius)
           .sort((a, b) => a.d - b.d)
           .map((r) => ({
@@ -48,8 +57,7 @@ export async function GET(req: NextRequest) {
           }));
       }
     }
-    // Comment counts annotate the feed so cards can show real activity
-    // without the client making one request per incident.
+
     const withCounts = await commentCountsFor(incidents);
     const annotated = incidents.map((i) => ({
       ...i,
@@ -155,19 +163,18 @@ export async function POST(req: NextRequest) {
     let imageData: string | null = null;
     let photoUrl: string | undefined;
     if (body.image?.data) {
-      const type = body.image.type ?? "image/jpeg";
-      if (!["image/jpeg", "image/png", "image/webp"].includes(type)) {
+      const imageType = body.image.type ?? "image/jpeg";
+      if (!["image/jpeg", "image/png", "image/webp"].includes(imageType)) {
         return NextResponse.json({ error: "Unsupported image type. Use JPG, PNG or WebP." }, { status: 415 });
       }
       imageData = body.image.data;
-      const stored = await putReportPhoto(user.id, imageData, type);
+      const { putReportPhoto } = await import("@/lib/avatar-store");
+      const stored = await putReportPhoto(user.id, imageData, imageType);
       if ("error" in stored) return NextResponse.json({ error: stored.error }, { status: 413 });
       photoUrl = stored.url;
     }
 
-    // IMPORTANT: the server recomputes the AI assessment from the raw report.
-    // The client may preview an analysis, but it cannot choose the stored
-    // verification/publication result.
+    const { analyzeIncident } = await import("@/lib/hillsense");
     const result = await analyzeIncident({
       text: description,
       imageBase64: imageData,
@@ -207,7 +214,7 @@ export async function POST(req: NextRequest) {
       publication: result.verification.publication,
       reporter_label: "Community report",
       reporter_id: user.id,
-      reporter_details: details,
+      reporter_details: { ...details, hazard_type: hazardType },
       confirmations_yes: 0,
       confirmations_no: 0,
       ...(photoUrl ? { photo_url: photoUrl } : {}),

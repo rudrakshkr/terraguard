@@ -93,7 +93,7 @@ async function persist(list: Incident[]): Promise<void> {
 }
 
 export async function listIncidents(
-  f: IncidentFilters & { public?: boolean; lat?: number; lng?: number; radiusKm?: number } = {},
+  f: IncidentFilters & { public?: boolean; communityReview?: boolean; lat?: number; lng?: number; radiusKm?: number } = {},
 ): Promise<Incident[]> {
   let list = await load();
   if (f.severity) list = list.filter((i) => i.severity === f.severity);
@@ -112,13 +112,28 @@ export async function listIncidents(
         i.location.toLowerCase().includes(q),
     );
   }
-  // Public feed: only incidents that passed the AI evidence check (or seeded
-  // examples) are published.
+  // Public feed: only published, active incidents are shown. A report may
+  // become public either from the AI evidence check or from community
+  // corroboration after an AI "needs review" result.
   if (f.public) {
+    list = list.filter((i) => i.publication === "public" && i.status !== "Resolved");
+  }
+
+  // Community review queue: only recent, unresolved reports that AI could not
+  // auto-verify. These are visible to signed-in users so they can corroborate
+  // first-hand observations.
+  if (f.communityReview) {
+    const cutoff = Date.now() - 72 * 60 * 60_000;
     list = list.filter(
-      (i) => i.publication === "public" && i.verification === "verified" && i.status !== "Resolved",
+      (i) =>
+        i.publication === "review_only" &&
+        i.verification === "needs_review" &&
+        i.origin !== "seed" &&
+        i.status !== "Resolved" &&
+        new Date(i.created_at).getTime() >= cutoff,
     );
   }
+
   return [...list].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   );
@@ -211,44 +226,65 @@ export async function confirmIncident(
   stillPresent: boolean,
   counts?: { yes: number; no: number },
 ): Promise<Incident | null> {
-  if (kvMode !== "file") {
-    return kvMutate<Incident[], Incident | null>(
-      KV_KEY,
-      seedFn,
-      (list) => {
-        const idx = list.findIndex((i) => i.id === id);
-        if (idx === -1) return { doc: list, result: null };
-        const now = new Date().toISOString();
-        const cur = list[idx];
-        const yesCount = counts ? counts.yes : (cur.confirmations_yes ?? 0) + (stillPresent ? 1 : 0);
-        const noCount = counts ? counts.no : (cur.confirmations_no ?? 0) + (stillPresent ? 0 : 1);
-        const updated: Incident = {
-          ...cur,
-          ...(stillPresent ? { last_confirmed_at: now } : {}),
-          confirmations_yes: yesCount,
-          confirmations_no: noCount,
-        };
-        const next = [...list];
-        next[idx] = updated;
-        return { doc: next, result: updated };
-      },
-    );
-  }
-  const list = await load();
-  const idx = list.findIndex((i) => i.id === id);
-  if (idx === -1) return null;
-  const now = new Date().toISOString();
-  const cur = list[idx];
-  const yesCount = counts ? counts.yes : (cur.confirmations_yes ?? 0) + (stillPresent ? 1 : 0);
-  const noCount = counts ? counts.no : (cur.confirmations_no ?? 0) + (stillPresent ? 0 : 1);
-  const updated: Incident = {
-    ...cur,
-    ...(stillPresent ? { last_confirmed_at: now } : {}),
-    confirmations_yes: yesCount,
-    confirmations_no: noCount,
+  const mutateOne = (list: Incident[]): { doc: Incident[]; result: Incident | null } => {
+    const idx = list.findIndex((i) => i.id === id);
+    if (idx === -1) return { doc: list, result: null };
+
+    const now = new Date().toISOString();
+    const cur = list[idx];
+    const yesCount = counts ? counts.yes : (cur.confirmations_yes ?? 0);
+    const noCount = counts ? counts.no : (cur.confirmations_no ?? 0);
+
+    const communityPublishes =
+      stillPresent &&
+      cur.publication === "review_only" &&
+      cur.verification === "needs_review" &&
+      cur.origin !== "seed" &&
+      yesCount >= 2;
+
+    const updated: Incident = {
+      ...cur,
+      ...(stillPresent ? { last_confirmed_at: now } : {}),
+      confirmations_yes: yesCount,
+      confirmations_no: noCount,
+      ...(communityPublishes
+        ? {
+            publication: "public" as const,
+            verification_reasons: [
+              ...(cur.verification_reasons ?? []),
+              `Community corroboration reached ${yesCount} independent confirmations.`,
+            ],
+          }
+        : {}),
+      // Only already-public alerts can be auto-resolved by a majority of
+      // cleared responses. Review-only reports remain available for review.
+      status:
+        !stillPresent &&
+        cur.publication === "public" &&
+        noCount > yesCount + 1 &&
+        cur.status === "Open"
+          ? "Resolved"
+          : cur.status,
+      status_history:
+        !stillPresent &&
+        cur.publication === "public" &&
+        noCount > yesCount + 1 &&
+        cur.status === "Open"
+          ? [...(cur.status_history ?? []), { status: "Resolved" as const, at: now }]
+          : cur.status_history,
+    };
+
+    const next = [...list];
+    next[idx] = updated;
+    return { doc: next, result: updated };
   };
-  const next = [...list];
-  next[idx] = updated;
-  await persist(next);
-  return updated;
+
+  if (kvMode !== "file") {
+    return kvMutate<Incident[], Incident | null>(KV_KEY, seedFn, async (list) => mutateOne(list));
+  }
+
+  const list = await load();
+  const { doc, result } = mutateOne(list);
+  await persist(doc);
+  return result;
 }

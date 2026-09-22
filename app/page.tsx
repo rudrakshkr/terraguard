@@ -39,16 +39,16 @@ function HazardCard({ incident, km }: { incident: Incident; km: number | null })
         className="card fade-up flex flex-col gap-2.5 p-4 transition hover:-translate-y-px sm:p-5"
         aria-label={`${i.incident_type}, ${i.severity} severity`}
       >
-        {/* Header row: severity + type … AI CHECK PASSED pinned right */}
+        {/* Header row: severity + type … publication status pinned right */}
         <div className="flex items-center gap-2.5">
           <span className={`chip chip-${i.severity.toLowerCase()} shrink-0`}>
             <span className="dot" />
             {i.severity.toUpperCase()}
           </span>
           <h3 className="min-w-0 flex-1 truncate text-[15px] font-semibold leading-snug">{i.incident_type}</h3>
-          <span className="chip chip-info shrink-0">
+          <span className={`chip ${i.publication === "public" && i.verification === "needs_review" ? "chip-low" : "chip-info"} shrink-0`}>
             <ShieldCheck className="h-3 w-3" />
-            AI CHECK PASSED
+            {i.publication === "public" && i.verification === "needs_review" ? "COMMUNITY CORROBORATED" : "AI CHECK PASSED"}
           </span>
         </div>
 
@@ -350,5 +350,3 @@ export default function NearbyPage() {
     </div>
   );
 }
-
-

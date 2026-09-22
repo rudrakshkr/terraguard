@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { MapPin, Clock, Radio, ShieldCheck, Phone, Navigation, Siren, MessageSquare } from "lucide-react";
 import type { Incident } from "@/lib/types";
-import { useAuth } from "@/hooks/useAuth";
+import { useAuth, authFetch } from "@/hooks/useAuth";
 import { haversineKm, fmtDistance, fmtAge, freshnessOf, minutesSince } from "@/lib/geo";
 import { exampleReportLabel, activityLabel } from "@/lib/labels";
 import { Spinner } from "@/components/Spinner";
@@ -20,6 +20,7 @@ export default function HomePage() {
   const router = useRouter();
   const { user, authed, loading } = useAuth();
   const [incidents, setIncidents] = useState<Incident[] | null>(null);
+  const [reviewIncidents, setReviewIncidents] = useState<Incident[]>([]);
   const [profileLoc, setProfileLoc] = useState<{ lat: number; lng: number; label?: string } | null>(null);
 
   useEffect(() => {
@@ -30,15 +31,23 @@ export default function HomePage() {
 
   useEffect(() => {
     const t = setTimeout(() => {
+      let savedLoc: { lat: number; lng: number; label?: string } | null = null;
       try {
         const raw = localStorage.getItem("hillsense-location");
         if (raw) {
           const loc = JSON.parse(raw) as { lat: number; lng: number; label?: string };
-          if (Number.isFinite(loc.lat) && Number.isFinite(loc.lng)) setProfileLoc(loc);
+          if (Number.isFinite(loc.lat) && Number.isFinite(loc.lng)) {
+            savedLoc = loc;
+            setProfileLoc(loc);
+          }
         }
       } catch {
         /* ignore */
       }
+
+      const reviewQuery = savedLoc && Number.isFinite(savedLoc.lat) && Number.isFinite(savedLoc.lng)
+        ? `&lat=${encodeURIComponent(savedLoc.lat)}&lng=${encodeURIComponent(savedLoc.lng)}&radius_km=50`
+        : "";
 
       fetch("/api/incidents?public=1", { cache: "no-store" })
         .then(async (r) => {
@@ -60,6 +69,16 @@ export default function HomePage() {
             setIncidents([]);
           }
         });
+
+      // Review reports are private to signed-in community members until
+      // corroborated. authFetch attaches the user's session token.
+      authFetch(`/api/incidents?community_review=1${reviewQuery}`, { cache: "no-store" })
+        .then(async (r) => {
+          if (!r.ok) throw new Error("review load failed");
+          const d = await r.json();
+          setReviewIncidents((d.incidents ?? []) as Incident[]);
+        })
+        .catch(() => setReviewIncidents([]));
     }, 0);
     return () => clearTimeout(t);
   }, []);
@@ -91,6 +110,22 @@ export default function HomePage() {
     });
   }, [incidents, profileLoc]);
 
+
+  const reviewRanked = useMemo(() => {
+    const withKm = reviewIncidents.map((i) => ({
+      i,
+      km: profileLoc ? haversineKm(profileLoc.lat, profileLoc.lng, i.lat, i.lng) : null,
+    }));
+    return withKm
+      .sort((a, b) => {
+        const aNear = (a.km ?? 9999) <= 50 ? 0 : 1;
+        const bNear = (b.km ?? 9999) <= 50 ? 0 : 1;
+        if (aNear !== bNear) return aNear - bNear;
+        return new Date(b.i.created_at).getTime() - new Date(a.i.created_at).getTime();
+      })
+      .slice(0, 6);
+  }, [reviewIncidents, profileLoc]);
+
   if (loading) {
     return (
       <div className="container-page py-16">
@@ -119,6 +154,41 @@ export default function HomePage() {
           <Link href="/report" className="btn btn-primary"><Siren className="h-4 w-4" /> Report Hazard</Link>
         </div>
       </div>
+
+      {reviewRanked.length > 0 && (
+        <section className="mb-6">
+          <div className="mb-3 flex items-end justify-between gap-3">
+            <div>
+              <h2 className="flex items-center gap-2 text-[13px] font-bold uppercase tracking-wider muted">
+                <ShieldCheck className="h-3.5 w-3.5" /> Community review queue
+              </h2>
+              <p className="mt-1 text-[12.5px] muted">
+                These reports need first-hand community corroboration. Two independent confirmations can publish a report.
+              </p>
+            </div>
+            <span className="chip chip-warn">{reviewRanked.length} awaiting review</span>
+          </div>
+          <ul className="grid gap-3">
+            {reviewRanked.map(({ i, km }) => (
+              <li key={i.id}>
+                <Link href={`/incident/${i.id}`} className="card block p-4 transition hover:-translate-y-px" style={{ borderColor: "color-mix(in srgb, var(--warn) 32%, var(--border))" }}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`chip chip-${i.severity.toLowerCase()}`}><span className="dot" />{i.severity.toUpperCase()}</span>
+                    <span className="text-[15px] font-semibold">{i.incident_type}</span>
+                    <span className="chip chip-warn ml-auto"><ShieldCheck className="h-3 w-3" /> NEEDS COMMUNITY CORROBORATION</span>
+                  </div>
+                  <p className="mt-2 text-[14px] leading-relaxed">{i.summary}</p>
+                  <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] muted">
+                    <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{km != null && Number.isFinite(km) ? `${fmtDistance(km)} · ` : ""}{i.location}</span>
+                    <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5" />Reported {fmtAge(minutesSince(i.created_at))}</span>
+                    <span className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5" />{i.confirmations_yes ?? 0} confirmation{(i.confirmations_yes ?? 0) === 1 ? "" : "s"}</span>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {incidents === null ? (
         <div className="card flex h-56 items-center justify-center"><Spinner className="h-6 w-6" /></div>
@@ -172,9 +242,9 @@ function IncidentRow({ i, km }: { i: Incident; km: number | null }) {
             {i.severity.toUpperCase()}
           </span>
           <span className="text-[15px] font-semibold">{i.incident_type}</span>
-          <span className="chip chip-info ml-auto">
+          <span className={`chip ${i.publication === "public" && i.verification === "needs_review" ? "chip-low" : "chip-info"} ml-auto`}>
             <ShieldCheck className="h-3 w-3" />
-            AI CHECK PASSED
+            {i.publication === "public" && i.verification === "needs_review" ? "COMMUNITY CORROBORATED" : "AI CHECK PASSED"}
           </span>
         </div>
         <p className="mt-2 text-[14px] leading-relaxed">{i.summary}</p>

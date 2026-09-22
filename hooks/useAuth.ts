@@ -9,6 +9,7 @@ export interface AuthUser {
   avatar_url?: string;
   onboarded: boolean;
   has_location: boolean;
+  is_operator: boolean;
 }
 
 const TOKEN_KEY = "hillsense-auth-token";
@@ -35,6 +36,7 @@ function readCachedUser(): AuthUser | null {
       ...(typeof parsed.avatar_url === "string" ? { avatar_url: parsed.avatar_url } : {}),
       onboarded: parsed.onboarded === true,
       has_location: parsed.has_location === true,
+      is_operator: parsed.is_operator === true,
     };
   } catch {
     return null;

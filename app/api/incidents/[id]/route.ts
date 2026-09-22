@@ -10,7 +10,7 @@ import {
   deleteComment,
   withAuthorProfiles,
 } from "@/lib/community-store";
-import { userFromRequest, getUserById } from "@/lib/auth";
+import { userFromRequest, getUserById, isOperatorUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 // Never cache: incidents and community data must be live across all clients.
@@ -28,7 +28,7 @@ export async function GET(
     }
 
     const user = await userFromRequest(req);
-    const publicIncident = incident.publication === "public" && incident.verification === "verified";
+    const publicIncident = incident.publication === "public";
     if (!publicIncident && !user) {
       return NextResponse.json({ error: "Incident not found." }, { status: 404 });
     }
@@ -123,16 +123,25 @@ export async function POST(
         );
       }
 
-      const counts = await confirmationCounts(id);
+      // For an unpublished report, the reporter's own vote does not count as
+      // independent community corroboration. Other users can collectively
+      // publish an AI-needs-review report with enough first-hand confirmations.
+      const counts = await confirmationCounts(id, { excludeUserId: incident.reporter_id });
       const updated = await confirmIncident(id, response === "yes", counts);
       if (!updated) {
         return NextResponse.json({ error: "Incident not found." }, { status: 404 });
       }
+      const communityPublished =
+        incident.publication === "review_only" &&
+        updated.publication === "public";
+
       return NextResponse.json({
         incident: updated,
         my_confirmation: { response: record.response, at: record.at },
-        message:
-          response === "yes"
+        published: communityPublished,
+        message: communityPublished
+          ? "This report has been published after independent community corroboration."
+          : response === "yes"
             ? "Thanks. Your confirmation was recorded."
             : "Thanks. Your update was recorded.",
       });
@@ -177,6 +186,9 @@ export async function PATCH(
     const user = await userFromRequest(req);
     if (!user) {
       return NextResponse.json({ error: "Sign in required to update incident status." }, { status: 401 });
+    }
+    if (!isOperatorUser(user)) {
+      return NextResponse.json({ error: "Operator access required to update incident status." }, { status: 403 });
     }
     const { id } = await ctx.params;
     const body = (await req.json()) as { status?: string; new_status?: string };

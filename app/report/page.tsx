@@ -320,7 +320,7 @@ export default function ReportPage() {
       });
       const data = (await res.json()) as { incident?: { id: string; verification?: string }; error?: string; replayed?: boolean };
       if (res.status === 401) {
-        setError("Your session expired. Please sign in again to publish this report.");
+        setError("Your session expired. Please sign in again to submit this report.");
         setSaving(false);
         return;
       }
@@ -701,7 +701,7 @@ export default function ReportPage() {
                   {result && result.verification.status !== "rejected" && (
                     <button type="button" onClick={save} disabled={saving} className="btn btn-primary w-full sm:w-auto">
                       {saving ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" aria-hidden />}
-                      {saving ? "Publishing…" : result.verification.status === "verified" ? "Publish to nearby users" : "Save for review"}
+                      {saving ? "Submitting…" : result.verification.status === "verified" ? "Publish to nearby users" : "Send to community review"}
                     </button>
                   )}
                 </>

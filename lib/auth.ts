@@ -67,6 +67,30 @@ export interface UserRecord {
   };
 }
 
+
+/** Server-side operator allowlist. Configure one or both env vars in production.
+ * Values are never exposed; `publicUser` exposes only a boolean capability flag.
+ * Example: HILLSENSE_OPERATOR_USER_IDS="uuid-1,uuid-2"
+ * or: HILLSENSE_OPERATOR_PHONES="919876543210"
+ */
+function envList(name: string): string[] {
+  return (process.env[name] ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+export function isOperatorUser(user: UserRecord | null | undefined): boolean {
+  if (!user) return false;
+  const ids = new Set(envList("HILLSENSE_OPERATOR_USER_IDS"));
+  const phones = new Set(
+    envList("HILLSENSE_OPERATOR_PHONES")
+      .map((value) => normalizePhone(value))
+      .filter((value): value is string => Boolean(value)),
+  );
+  return ids.has(user.id) || phones.has(user.phone);
+}
+
 export interface SessionRecord {
   token_hash: string;
   user_id: string;
@@ -348,6 +372,7 @@ export function publicUser(u: UserRecord) {
     ...(u.avatar_url ? { avatar_url: u.avatar_url } : {}),
     onboarded: u.onboarded,
     has_location: Boolean(u.location),
+    is_operator: isOperatorUser(u),
   };
 }
 

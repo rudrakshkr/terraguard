@@ -25,74 +25,6 @@ const IncidentMap = dynamic(() => import("@/components/IncidentMap"), {
 
 import { jsPDF } from "jspdf";
 
-
-const OFFLINE_CONFIRMATION_KEY = "hillsense-offline-confirmation:";
-
-function offlineConfirmationKey(userId: string, incidentId: string): string {
-  return `${OFFLINE_CONFIRMATION_KEY}${userId}:${incidentId}`;
-}
-
-function readOfflineConfirmation(incidentId: string, userId?: string | null) {
-  if (!userId) return null;
-  try {
-    const raw = localStorage.getItem(offlineConfirmationKey(userId, incidentId));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { response?: "yes" | "no"; at?: string };
-    if ((parsed.response !== "yes" && parsed.response !== "no") || typeof parsed.at !== "string") {
-      localStorage.removeItem(offlineConfirmationKey(userId, incidentId));
-      return null;
-    }
-    return parsed as { response: "yes" | "no"; at: string };
-  } catch {
-    return null;
-  }
-}
-
-function writeOfflineConfirmation(incidentId: string, userId: string | null | undefined, confirmation: { response: "yes" | "no"; at: string } | null) {
-  if (!userId) return;
-  try {
-    const key = offlineConfirmationKey(userId, incidentId);
-    if (confirmation) localStorage.setItem(key, JSON.stringify(confirmation));
-    else localStorage.removeItem(key);
-  } catch {
-    /* local storage unavailable */
-  }
-}
-
-async function cacheIncidentDetail(
-  incidentId: string,
-  incidentData: unknown,
-  commentData: unknown[],
-  userId?: string | null,
-  confirmation?: { response: "yes" | "no"; at: string } | null,
-): Promise<void> {
-  try {
-    const { putCachedDetail } = await import("@/lib/offline-db");
-    await putCachedDetail(incidentId, incidentData, commentData);
-    if (userId) writeOfflineConfirmation(incidentId, userId, confirmation ?? null);
-  } catch {
-    /* storage unavailable */
-  }
-}
-
-async function readCachedIncidentDetail(
-  incidentId: string,
-  userId?: string | null,
-): Promise<{ incident: unknown; comments: unknown[]; my_confirmation: { response: "yes" | "no"; at: string } | null } | null> {
-  try {
-    const { getCachedDetail } = await import("@/lib/offline-db");
-    const cached = await getCachedDetail(incidentId);
-    if (!cached) return null;
-    return {
-      incident: cached.incident,
-      comments: cached.comments ?? [],
-      my_confirmation: readOfflineConfirmation(incidentId, userId),
-    };
-  } catch {
-    return null;
-  }
-}
-
 interface CommentItem {
   id: string;
   user_id: string;
@@ -168,8 +100,10 @@ function downloadPDF(i: Incident, distanceLabel: string | null) {
   doc.setFont("helvetica", "normal"); doc.setFontSize(10.5); doc.setTextColor(90, 104, 120);
   doc.text(`Location: ${i.location}${i.coords_approximate ? " (approximate)" : ""}${distanceLabel ? ` · ${distanceLabel}` : ""}`, M, y); y += 14;
   doc.text(`Reported: ${i.origin === "seed" ? fmtDate(i.created_at) : fmtDateTime(i.created_at)}   |   Status: ${i.status === "Open" ? "ACTIVE" : i.status.toUpperCase()}`, M, y); y += 14;
-  const assessment = i.verification === "verified" ? "Consistent" : i.verification === "needs_review" ? "Unclear" : "Conflicting";
-  doc.text(`Verification: ${i.verification === "verified" ? "AI CHECK PASSED (evidence consistency)" : i.verification === "needs_review" ? "NEEDS REVIEW" : "NOT PUBLISHED"}   |   Evidence assessment: ${assessment}`, M, y); y += 14;
+  const isCommunityPublished = i.publication === "public" && i.verification === "needs_review";
+  const assessment = i.verification === "verified" ? "Consistent" : isCommunityPublished ? "Community corroborated" : i.verification === "needs_review" ? "Unclear" : "Conflicting";
+  const verificationLabel = i.verification === "verified" ? "AI CHECK PASSED (evidence consistency)" : isCommunityPublished ? "COMMUNITY CORROBORATED" : i.verification === "needs_review" ? "NEEDS REVIEW" : "NOT PUBLISHED";
+  doc.text(`Verification: ${verificationLabel}   |   Evidence assessment: ${assessment}`, M, y); y += 14;
   doc.text(`Origin: ${originMeta(i.origin).label}   |   ${i.confirmations_yes ? `Community confirmation (${i.confirmations_yes})` : "Last updated"}: ${fmtDateTime(i.last_confirmed_at ?? i.created_at)}`, M, y);
   y += 26;
 
@@ -220,14 +154,9 @@ function useDistance(i: Incident | null) {
 export default function IncidentPage() {
   const { id } = useParams<{ id: string }>();
   const { user, authed, loading: authLoading } = useAuth();
-
   const [incident, setIncident] = useState<Incident | null>(null);
   const [comments, setComments] = useState<CommentItem[]>([]);
-  const [myConfirmation, setMyConfirmation] = useState<{
-    response: "yes" | "no";
-    at: string;
-  } | null>(null);
-
+  const [myConfirmation, setMyConfirmation] = useState<{ response: "yes" | "no"; at: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -235,123 +164,75 @@ export default function IncidentPage() {
   const [commentText, setCommentText] = useState("");
   const [postingComment, setPostingComment] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
-
   const distance = useDistance(incident);
   const loadedOnceRef = useRef(false);
+
+  const load = () => {
+    // authFetch: signed-in users get my_confirmation back; guests get the public view.
+    // A brief retry ladder: immediately after publishing, a serverless instance
+    // on another region may briefly not see the new document yet.
+    const delays = [0, 800, 2000];
+    const attempts = delays.map(
+      (delay) =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => resolve(fetchOnce()), delay);
+        }),
+    );
+    return Promise.allSettled(attempts);
+  };
 
   const fetchOnce = () => {
     authFetch(`/api/incidents/${id}`, { cache: "no-store" })
       .then(async (r) => {
         const data = await r.json();
-
-        if (!r.ok) {
-          throw new Error(data.error ?? "failed");
-        }
-
+        if (!r.ok) throw new Error(data.error ?? "failed");
         setIncident(data.incident as Incident);
         setComments((data.comments ?? []) as CommentItem[]);
         setMyConfirmation(data.my_confirmation ?? null);
         loadedOnceRef.current = true;
         setError(null);
-
-        // Persist the incident for offline viewing.
-        await cacheIncidentDetail(
-          id,
-          data.incident,
-          data.comments ?? [],
-          user?.id,
-          data.my_confirmation ?? null,
-        );
+        // Persist to IndexedDB so the incident stays readable offline.
+        try {
+          const { putCachedDetail } = await import("@/lib/offline-db");
+          await putCachedDetail(id, data.incident, data.comments ?? [], user?.id, data.my_confirmation ?? null);
+        } catch { /* storage unavailable */ }
       })
       .catch((e: unknown) => {
-        // Do not replace already-loaded data with an error.
-        if (incident || loadedOnceRef.current) return;
-
-        // Offline / server unreachable:
-        // fall back to the last cached copy.
+        if (incident || loadedOnceRef.current) return; // had data — never flash the error
+        // Offline / server unreachable: fall back to the last stored copy.
         void (async () => {
-          const cached = await readCachedIncidentDetail(id, user?.id);
-
-          if (cached) {
-            setIncident(cached.incident as Incident);
-            setComments(cached.comments as CommentItem[]);
-            setMyConfirmation(cached.my_confirmation);
-            loadedOnceRef.current = true;
-            setNotice(
-              "Showing the saved copy from your last visit (offline).",
-            );
-            return;
-          }
-
-          setError(
-            "Could not load this incident. Check the link and try again.",
-          );
+          try {
+            const { getCachedDetail } = await import("@/lib/offline-db");
+            const cached = await getCachedDetail(id, user?.id);
+            if (cached) {
+              setIncident(cached.incident as Incident);
+              setComments((cached.comments ?? []) as CommentItem[]);
+              setMyConfirmation(cached.my_confirmation ?? null);
+              loadedOnceRef.current = true;
+              setNotice("Showing the saved copy from your last visit (offline).");
+              return;
+            }
+          } catch { /* storage unavailable */ }
+          setError("Could not load this incident. Check the link and try again.");
         })();
-
         void e;
       });
   };
 
-  const load = () => {
-    // Signed-in users receive my_confirmation from the API.
-    // Guests receive the public incident view.
-    //
-    // Brief retry ladder in case a newly-created incident is temporarily
-    // unavailable across serverless instances/regions.
-    const delays = [0, 800, 2000];
-
-    const attempts = delays.map(
-      (delay) =>
-        new Promise<void>((resolve) => {
-          setTimeout(() => {
-            fetchOnce();
-            resolve();
-          }, delay);
-        }),
-    );
-
-    return Promise.allSettled(attempts);
-  };
-
   useEffect(() => {
     if (!id) return;
-
-    const t = setTimeout(() => {
-      void load();
-    }, 0);
-
+    const t = setTimeout(load, 0);
     return () => clearTimeout(t);
-
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, authed]);
 
   useEffect(() => {
     const onUpdated = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          incidentId?: string;
-          kind?: string;
-        }>
-      ).detail;
-
-      if (detail?.incidentId === id) {
-        void fetchOnce();
-      } else if (detail?.kind === "profile") {
-        void fetchOnce();
-      }
+      const detail = (event as CustomEvent<{ incidentId?: string }>).detail;
+      if (detail?.incidentId === id) void fetchOnce();
     };
-
-    window.addEventListener(
-      "hillsense:data-updated",
-      onUpdated as EventListener,
-    );
-
-    return () =>
-      window.removeEventListener(
-        "hillsense:data-updated",
-        onUpdated as EventListener,
-      );
-
+    window.addEventListener("hillsense:data-updated", onUpdated as EventListener);
+    return () => window.removeEventListener("hillsense:data-updated", onUpdated as EventListener);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -360,142 +241,76 @@ export default function IncidentPage() {
       setNotice("You have already responded to this incident.");
       return;
     }
-
     setConfirming(true);
     setActionError(null);
-
-    // Offline:
-    // queue the confirmation locally and update the UI immediately.
-    // The server remains the source of truth after synchronization.
+    // Offline: queue the confirmation in the outbox and reflect it locally.
+    // The server stays the source of truth — counts reconcile after sync.
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       const { enqueue, newOutboxId } = await import("@/lib/offline-db");
-
       await enqueue({
         id: newOutboxId(),
         kind: "confirmation",
         incident_id: id,
-        payload: {
-          response: stillPresent ? "yes" : "no",
-        },
+        payload: { response: stillPresent ? "yes" : "no" },
         created_at: new Date().toISOString(),
         state: "pending",
         attempts: 0,
       });
-
       const confirmationAt = new Date().toISOString();
-
-      const nextConfirmation = {
-        response: stillPresent ? ("yes" as const) : ("no" as const),
-        at: confirmationAt,
-      };
-
+      const nextConfirmation = { response: stillPresent ? "yes" as const : "no" as const, at: confirmationAt };
       setMyConfirmation(nextConfirmation);
-
       const nextIncident = incident
         ? {
             ...incident,
-            confirmations_yes:
-              (incident.confirmations_yes ?? 0) +
-              (stillPresent ? 1 : 0),
-            confirmations_no:
-              (incident.confirmations_no ?? 0) +
-              (stillPresent ? 0 : 1),
+            confirmations_yes: (incident.confirmations_yes ?? 0) + (stillPresent ? 1 : 0),
+            confirmations_no: (incident.confirmations_no ?? 0) + (stillPresent ? 0 : 1),
           }
         : null;
-
       setIncident(nextIncident);
-
-      if (nextIncident) {
-        await cacheIncidentDetail(
-          id,
-          nextIncident,
-          comments,
-          user?.id,
-          nextConfirmation,
-        );
-      }
-
-      writeOfflineConfirmation(
-        id,
-        user?.id,
-        nextConfirmation,
-      );
-
-      setNotice(
-        "Saved offline — your response will sync when you're back online.",
-      );
-
+      try {
+        const { putCachedDetail } = await import("@/lib/offline-db");
+        if (nextIncident) await putCachedDetail(id, nextIncident, comments, user?.id, nextConfirmation);
+      } catch { /* best-effort */ }
+      setNotice("Saved offline — your response will sync when you're back online.");
       setConfirming(false);
       return;
     }
-
     try {
       let res = await authFetch(`/api/incidents/${id}`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: "confirm",
-          response: stillPresent ? "yes" : "no",
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "confirm", response: stillPresent ? "yes" : "no" }),
       });
-
-      // A first click immediately after refresh can race session hydration.
-      // Give the auth token a brief chance to become available, then retry.
+      // First click straight after a page refresh can race the session
+      // hydration (module token cache not yet populated). Give it one chance
+      // to resolve, then retry — the user should never see a false
+      // "please sign in" while they are actually signed in.
       if (res.status === 401 && !getAuthToken()) {
         await new Promise((r) => setTimeout(r, 350));
-
         if (getAuthToken()) {
           res = await authFetch(`/api/incidents/${id}`, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              action: "confirm",
-              response: stillPresent ? "yes" : "no",
-            }),
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "confirm", response: stillPresent ? "yes" : "no" }),
           });
         }
       }
-
       const data = await res.json();
-
       if (res.status === 401) {
-        setActionError(
-          "Your session has expired. Please sign in again to confirm hazards.",
-        );
+        setActionError("Your session has expired. Please sign in again to confirm hazards.");
         return;
       }
-
       if (!res.ok) {
-        setActionError(
-          data.error ?? "Could not record your response.",
-        );
+        setActionError(data.error ?? "Could not record your response.");
         return;
       }
-
       setIncident(data.incident as Incident);
-
-      if (data.my_confirmation) {
-        setMyConfirmation(data.my_confirmation);
-      }
-
-      await cacheIncidentDetail(
-        id,
-        data.incident,
-        comments,
-        user?.id,
-        data.my_confirmation ?? null,
-      );
-
-      setNotice(
-        data.message ??
-          (data.already_confirmed
-            ? "You already responded to this hazard."
-            : "Thanks — your response was recorded."),
-      );
+      if (data.my_confirmation) setMyConfirmation(data.my_confirmation);
+      try {
+        const { putCachedDetail } = await import("@/lib/offline-db");
+        await putCachedDetail(id, data.incident, comments, user?.id, data.my_confirmation ?? null);
+      } catch { /* best-effort */ }
+      setNotice(data.message ?? (data.already_confirmed ? "You already responded to this hazard." : "Thanks — your response was recorded."));
     } catch {
       setActionError("Network problem — please try again.");
     } finally {
@@ -538,18 +353,21 @@ export default function IncidentPage() {
         ...c,
       ]);
       setCommentText("");
-      const nextComments = [{
-        id: localId,
-        user_id: user?.id ?? "",
-        author_name: user?.display_name ?? "You",
-        author_display_name: user?.display_name ?? "You",
-        author_initials: user?.initials,
-        author_avatar_url: user?.avatar_url ?? null,
-        body: text,
-        created_at: new Date().toISOString(),
-        local_state: "pending" as const,
-      }, ...comments];
-      await cacheIncidentDetail(id, incident, nextComments, user?.id, myConfirmation);
+      try {
+        const { putCachedDetail } = await import("@/lib/offline-db");
+        const nextComments = [{
+          id: localId,
+          user_id: user?.id ?? "",
+          author_name: user?.display_name ?? "You",
+          author_display_name: user?.display_name ?? "You",
+          author_initials: user?.initials,
+          author_avatar_url: user?.avatar_url ?? null,
+          body: text,
+          created_at: new Date().toISOString(),
+          local_state: "pending",
+        }, ...comments];
+        await putCachedDetail(id, incident, nextComments, user?.id, myConfirmation);
+      } catch { /* best-effort */ }
       setNotice("Saved offline — your update will sync when you're back online.");
       setPostingComment(false);
       return;
@@ -633,7 +451,8 @@ export default function IncidentPage() {
   const alreadyResponded = myConfirmation !== null;
   const timeline: { label: string; at: string }[] = [
     { label: `Report submitted (${originMeta(i.origin).label})`, at: i.created_at },
-    ...(i.verification ? [{ label: `AI evidence check: ${i.verification === "verified" ? "passed" : i.verification === "needs_review" ? "needs review" : "failed — not published"}`, at: i.created_at }] : []),
+    ...(i.verification ? [{ label: i.publication === "public" && i.verification === "needs_review" ? "AI evidence check: needs review" : `AI evidence check: ${i.verification === "verified" ? "passed" : i.verification === "needs_review" ? "needs review" : "failed — not published"}`, at: i.created_at }] : []),
+    ...(i.publication === "public" && i.verification === "needs_review" ? [{ label: `Published after community corroboration (${i.confirmations_yes ?? 0} confirmations)`, at: i.last_confirmed_at ?? i.created_at }] : []),
     ...((i.sources?.length ?? 0) > 0 ? [{ label: `Safety guidance attached (${i.sources.length})`, at: i.created_at }] : []),
     ...(i.pipeline?.saved_at ? [{ label: "Published / saved", at: i.pipeline.saved_at }] : []),
     ...(i.status_history ?? []).slice(1).map((h) => ({ label: `Status → ${h.status}`, at: h.at })),
@@ -661,7 +480,11 @@ export default function IncidentPage() {
           <div className="flex flex-wrap items-center gap-2">
             <SeverityChip severity={i.severity} />
             <StatusChip status={i.status} />
-            <VerificationChip verification={i.verification} />
+            {i.publication === "public" && i.verification === "needs_review" ? (
+              <span className="chip chip-low"><ShieldCheck className="h-3 w-3" /> COMMUNITY CORROBORATED</span>
+            ) : (
+              <VerificationChip verification={i.verification} />
+            )}
             <OriginChip origin={i.origin} />
           </div>
           <h1 className="mt-3 text-3xl font-bold tracking-tight">{i.incident_type}</h1>
@@ -719,7 +542,12 @@ export default function IncidentPage() {
         {/* Community confirmation — one response per signed-in user, enforced server-side */}
         {i.status !== "Resolved" && (
           <div className="mt-5 rounded-lg border p-4" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
-            <p className="text-[14px] font-semibold">Is this hazard still present?</p>
+            <p className="text-[14px] font-semibold">{i.publication === "review_only" ? "Can you confirm this report?" : "Is this hazard still present?"}</p>
+            {i.publication === "review_only" && (
+              <p className="mt-1.5 text-[12.5px] muted">
+                AI could not verify this report automatically. A first-hand confirmation from two independent community members will publish it to the public feed.
+              </p>
+            )}
             {authLoading ? (
               <p className="mt-2 flex items-center gap-2 text-[12.5px] muted"><Spinner className="h-3.5 w-3.5" /> Checking your session…</p>
             ) : alreadyResponded ? (
@@ -741,14 +569,14 @@ export default function IncidentPage() {
               <>
                 <div className="mt-3 grid grid-cols-1 gap-2.5 min-[420px]:grid-cols-2">
                   <button onClick={() => confirm(true)} disabled={confirming} className="btn btn-primary w-full">
-                    <ThumbsUp className="h-4 w-4" /> Yes, still present
+                    <ThumbsUp className="h-4 w-4" /> {i.publication === "review_only" ? "Yes, I can confirm" : "Yes, still present"}
                   </button>
                   <button onClick={() => confirm(false)} disabled={confirming} className="btn btn-secondary w-full">
-                    <ThumbsDown className="h-4 w-4" /> No, it has cleared
+                    <ThumbsDown className="h-4 w-4" /> {i.publication === "review_only" ? "No / not present" : "No, it has cleared"}
                   </button>
                   {confirming && <Spinner className="mx-auto h-4 w-4" />}
                 </div>
-                <p className="mt-2 text-[11.5px] faint">You can respond once per incident — your answer updates how fresh this alert appears to others.</p>
+                <p className="mt-2 text-[11.5px] faint">{i.publication === "review_only" ? "One response per person is counted. Confirm only what you can directly observe." : "You can respond once per incident — your answer updates how fresh this alert appears to others."}</p>
               </>
             ) : (
               <div className="mt-3 rounded-lg p-3" style={{ background: "var(--surface)" }}>
@@ -775,16 +603,26 @@ export default function IncidentPage() {
           <section className="mt-6">
             <h2 className="flex items-center gap-2 text-[15px] font-bold">
               <ShieldCheck className="h-4.5 w-4.5" style={{ color: "var(--low)" }} />
-              {i.verification === "verified" ? "Why this report passed the AI check" : "Why this report is in review"}
+              {i.publication === "public" && i.verification === "needs_review"
+                ? "Why this report is publicly corroborated"
+                : i.verification === "verified"
+                  ? "Why this report passed the AI check"
+                  : "Why this report is in review"}
             </h2>
             <ul className="check-list mt-2.5 space-y-1.5">
               {(i.verification_reasons?.length ? i.verification_reasons : ["Evidence consistency checked by the HillSense pipeline"]).map((r, n) => (
                 <li key={n}>{r}</li>
               ))}
             </ul>
-            <p className="mt-2 text-[11.5px] faint">
-              HillSense evaluates evidence consistency — it does not judge whether a reporter is truthful.
-            </p>
+            {i.publication === "public" && i.verification === "needs_review" ? (
+              <p className="mt-2 text-[11.5px] faint">
+                AI review was inconclusive; the report became public after two independent community confirmations.
+              </p>
+            ) : (
+              <p className="mt-2 text-[11.5px] faint">
+                HillSense evaluates evidence consistency — it does not judge whether a reporter is truthful.
+              </p>
+            )}
           </section>
         )}
 
@@ -872,8 +710,8 @@ export default function IncidentPage() {
           <div className="min-w-0">
             <div className="text-[10.5px] font-bold uppercase tracking-wider faint">Evidence assessment</div>
             <div className="mt-1">
-              <span className={`chip ${i.verification === "verified" ? "chip-low" : i.verification === "needs_review" ? "chip-warn" : "chip-critical"}`}>
-                {i.verification === "verified" ? "Consistent" : i.verification === "needs_review" ? "Unclear" : "Conflicting"}
+              <span className={`chip ${i.publication === "public" && i.verification === "needs_review" ? "chip-low" : i.verification === "verified" ? "chip-low" : i.verification === "needs_review" ? "chip-warn" : "chip-critical"}`}>
+                {i.publication === "public" && i.verification === "needs_review" ? "Community corroborated" : i.verification === "verified" ? "Consistent" : i.verification === "needs_review" ? "Unclear" : "Conflicting"}
               </span>
             </div>
           </div>
@@ -919,7 +757,7 @@ export default function IncidentPage() {
           </h2>
           <p className="mt-1 text-[12px] muted">
             Observations from people nearby. Comments are community contributions —{" "}
-            <strong>not</strong> checked facts like the AI CHECK PASSED assessment above.
+            <strong>not independently verified</strong> facts — community observations are separate from the report assessment above.
           </p>
 
           {authLoading ? (

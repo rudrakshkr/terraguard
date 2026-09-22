@@ -161,11 +161,17 @@ export async function latestConfirmationAt(incidentId: string): Promise<string |
 }
 
 /** Recount aggregate yes/no from the persisted per-user records. */
-export async function confirmationCounts(incidentId: string): Promise<{ yes: number; no: number }> {
+export async function confirmationCounts(
+  incidentId: string,
+  opts: { excludeUserId?: string } = {},
+): Promise<{ yes: number; no: number }> {
   const list = await listConfirmations(incidentId);
+  const filtered = opts.excludeUserId
+    ? list.filter((c) => c.user_id !== opts.excludeUserId)
+    : list;
   return {
-    yes: list.filter((c) => c.response === "yes").length,
-    no: list.filter((c) => c.response === "no").length,
+    yes: filtered.filter((c) => c.response === "yes").length,
+    no: filtered.filter((c) => c.response === "no").length,
   };
 }
 

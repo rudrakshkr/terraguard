@@ -1,17 +1,38 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { listIncidents } from "@/lib/store";
-import { detectClusters } from "@/lib/geo";
+import { detectClusters, haversineKm } from "@/lib/geo";
 
 export const runtime = "nodejs";
-// Never cache: incidents and community data must be live across all clients.
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+/**
+ * GET /api/clusters
+ *
+ * Returns clusters derived only from currently public, active incidents.
+ * This endpoint is intentionally public because the service worker caches
+ * cluster data as public read-only data.
+ *
+ * Optional query parameters:
+ *   ?lat=<number>&lng=<number>&radius_km=<number>
+ */
+export async function GET(req: NextRequest) {
   try {
-    const incidents = await listIncidents();
-    return NextResponse.json({ clusters: detectClusters(incidents) });
+    const incidents = await listIncidents({ public: true });
+    let clusters = detectClusters(incidents);
+
+    const lat = Number.parseFloat(req.nextUrl.searchParams.get("lat") ?? "");
+    const lng = Number.parseFloat(req.nextUrl.searchParams.get("lng") ?? "");
+    const radiusKm = Number.parseFloat(req.nextUrl.searchParams.get("radius_km") ?? "50");
+
+    if (Number.isFinite(lat) && Number.isFinite(lng) && Number.isFinite(radiusKm) && radiusKm >= 0) {
+      clusters = clusters.filter((cluster) =>
+        haversineKm(lat, lng, cluster.center.lat, cluster.center.lng) <= radiusKm,
+      );
+    }
+
+    return NextResponse.json({ clusters });
   } catch (err) {
-    console.error("[api/clusters]", err);
-    return NextResponse.json({ clusters: [] }, { status: 200 });
+    console.error("[api/clusters GET]", err);
+    return NextResponse.json({ error: "Could not load incident clusters." }, { status: 500 });
   }
 }
