@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import {
   kvMode,
   kvEnabled,
@@ -7,7 +7,10 @@ import {
   storageConfig,
   persistenceProblem,
   kvGetJson,
+  kvLoadDoc,
+  kvSaveDoc,
 } from "@/lib/kv";
+import { photoStorageInfo, probePhotoStorage } from "@/lib/avatar-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,8 +24,12 @@ export const dynamic = "force-dynamic";
  * NEVER exposed here: Redis/blob tokens, session tokens, SMS provider keys,
  * user records or phone numbers — only boolean config flags and a live
  * connectivity probe result. No probe ever writes user data.
+ *
+ * Add ?probe=photo to also verify PHOTO storage (the path that failed on a
+ * private Vercel Blob store while the JSON documents persisted fine).
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const photoProbeRequested = req.nextUrl.searchParams.get("probe") === "photo";
   let probe: "ok" | "failed" | "skipped" = "skipped";
   if (kvMode === "upstash") {
     // Read-only GET against Redis — verifies credentials and connectivity
@@ -34,16 +41,15 @@ export async function GET() {
       probe = "failed";
     }
   } else if (kvMode === "blob") {
-    // HEAD against Vercel Blob — verifies the store binding and token without
-    // reading or writing any user document.
+    // Round-trip a tiny document through the kv layer: same store, same access
+    // mode and same credentials the real writes use, so the result reflects
+    // actual persistence rather than a separate code path.
+    const key = "hillsense:__probe__:v1";
     try {
-      const { head } = await import("@vercel/blob");
-      await head("hillsense/data/__probe__.json");
-      probe = "ok";
+      await kvSaveDoc(key, { probe: Date.now() });
+      const back = await kvLoadDoc<{ probe?: number }>(key, async () => ({}));
+      probe = typeof back?.probe === "number" ? "ok" : "failed";
     } catch {
-      // A missing blob is fine — only auth/connection errors matter. The SDK
-      // throws for real failures, so any throw here means the store is not
-      // usable as configured.
       probe = "failed";
     }
   }
@@ -59,6 +65,12 @@ export async function GET() {
       runtime: storageRuntime,
       backends_configured: storageConfig,
       connectivity_probe: probe,
+      // Profile/report photos are stored separately from the JSON documents, so
+      // they can fail on their own (e.g. a store that rejects public access).
+      photo_storage: {
+        ...photoStorageInfo(),
+        ...(photoProbeRequested ? { probe: await probePhotoStorage() } : {}),
+      },
       ...(persistenceProblem ? { configuration_error: persistenceProblem } : {}),
     },
     // Signal misconfiguration at the HTTP level too, so a health check can

@@ -84,13 +84,17 @@ export async function POST(req: NextRequest) {
 
     // ---- photo: reuse the existing upload store (Vercel Blob / file mode) ----
     let photoUrl: string | undefined;
+    let photoWarning: string | undefined;
     if (body.photo?.data) {
       const type = body.photo.type && body.photo.type.startsWith("image/") ? body.photo.type : "image/jpeg";
-      const result = await putReportPhoto(user.id, body.photo.data, type);
-      if ("error" in result) {
-        return NextResponse.json({ error: result.error }, { status: 415 });
+      const stored = await putReportPhoto(user.id, body.photo.data, type);
+      if ("error" in stored) {
+        // Syncing a queued offline report must not fail (and lose the queue
+        // entry) over a photo copy — the report syncs, the photo is reported back.
+        photoWarning = `${stored.error} Your report was synced without the photo — every other detail was saved.`;
+      } else {
+        photoUrl = stored.url;
       }
-      photoUrl = result.url;
     }
 
     const rawLat = Number.isFinite(body.lat) ? (body.lat as number) : undefined;
@@ -156,7 +160,7 @@ export async function POST(req: NextRequest) {
       },
       confirmations_yes: 0,
       confirmations_no: 0,
-      photo_url: photoUrl,
+      ...(photoUrl ? { photo_url: photoUrl } : {}),
       client_id: clientId || undefined,
     });
 
@@ -179,7 +183,13 @@ export async function POST(req: NextRequest) {
     const annotated = { ...incident, comment_count: withCounts[incident.id] ?? 0 };
 
     return NextResponse.json(
-      { incident: annotated, related, user: publicUser(user), comments: await listComments(incident.id) },
+      {
+        incident: annotated,
+        related,
+        user: publicUser(user),
+        comments: await listComments(incident.id),
+        ...(photoWarning ? { photo_warning: photoWarning } : {}),
+      },
       { status: 201 },
     );
   } catch (err) {

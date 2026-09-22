@@ -167,6 +167,7 @@ export async function POST(req: NextRequest) {
 
     let imageData: string | null = null;
     let photoUrl: string | undefined;
+    let photoWarning: string | undefined;
     if (body.image?.data) {
       const imageType = body.image.type ?? "image/jpeg";
       if (!["image/jpeg", "image/png", "image/webp"].includes(imageType)) {
@@ -175,8 +176,13 @@ export async function POST(req: NextRequest) {
       imageData = body.image.data;
       const { putReportPhoto } = await import("@/lib/avatar-store");
       const stored = await putReportPhoto(user.id, imageData, imageType);
-      if ("error" in stored) return NextResponse.json({ error: stored.error }, { status: 413 });
-      photoUrl = stored.url;
+      if ("error" in stored) {
+        // A storage problem must never discard the report. The photo still goes
+        // to the evidence check below; only its saved copy is unavailable.
+        photoWarning = `${stored.error} Your report was saved without the photo — every other detail was submitted as entered.`;
+      } else {
+        photoUrl = stored.url;
+      }
     }
 
     const { analyzeIncident } = await import("@/lib/hillsense");
@@ -235,7 +241,13 @@ export async function POST(req: NextRequest) {
 
     const firstComment = await listComments(incident.id);
     return NextResponse.json(
-      { incident, related, user: publicUser(user), comments: firstComment },
+      {
+        incident,
+        related,
+        user: publicUser(user),
+        comments: firstComment,
+        ...(photoWarning ? { photo_warning: photoWarning } : {}),
+      },
       { status: 201 },
     );
   } catch (err) {

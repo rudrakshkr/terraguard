@@ -103,6 +103,10 @@ export default function ReportPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // Set when the report was saved but its photo could not be stored — the
+  // report is never discarded for a storage problem, so we say what happened.
+  const [photoWarning, setPhotoWarning] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const saveClientIdRef = useRef<string | null>(null);
 
@@ -318,13 +322,25 @@ export default function ReportPage() {
             : null,
         }),
       });
-      const data = (await res.json()) as { incident?: { id: string; verification?: string }; error?: string; replayed?: boolean };
+      const data = (await res.json()) as {
+        incident?: { id: string; verification?: string };
+        error?: string;
+        replayed?: boolean;
+        photo_warning?: string;
+      };
       if (res.status === 401) {
         setError("Your session expired. Please sign in again to submit this report.");
         setSaving(false);
         return;
       }
       if (!res.ok || !data.incident) throw new Error(data.error ?? "Could not save the report.");
+      if (data.photo_warning) {
+        // Stay on the page so the reporter actually sees what happened.
+        setPhotoWarning(data.photo_warning);
+        setSavedId(data.incident.id);
+        setSaving(false);
+        return;
+      }
       router.push(`/incident/${data.incident.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save the report.");
@@ -677,6 +693,19 @@ export default function ReportPage() {
           {error && (
             <div className="card p-4 text-[13px]" style={{ background: "var(--danger-soft)", color: "var(--danger)" }} role="alert">
               {error}
+            </div>
+          )}
+          {photoWarning && (
+            <div className="card p-4 text-[13.5px] leading-relaxed" style={{ background: "var(--warn-soft)", color: "var(--warn)" }} role="alert">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                <span>{photoWarning}</span>
+              </div>
+              {savedId && (
+                <Link href={`/incident/${savedId}`} className="btn btn-secondary mt-3 w-full sm:w-auto">
+                  View your report {savedId}
+                </Link>
+              )}
             </div>
           )}
           {notice && (
