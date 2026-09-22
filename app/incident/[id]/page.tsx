@@ -471,11 +471,15 @@ export default function IncidentPage() {
     }
 
     setLikingCommentId(commentId);
+    // Send the DESIRED state, not a toggle: a retried request then resolves to
+    // the same outcome instead of flipping the like back off.
+    const desired = !currentlyLiked;
+    const likeBody = JSON.stringify({ action: "like", comment_id: commentId, liked: desired });
     try {
       let res = await authFetch(`/api/incidents/${id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "like", comment_id: commentId }),
+        body: likeBody,
       });
       if (res.status === 401 && !getAuthToken()) {
         await new Promise((r) => setTimeout(r, 350));
@@ -483,7 +487,7 @@ export default function IncidentPage() {
           res = await authFetch(`/api/incidents/${id}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "like", comment_id: commentId }),
+            body: likeBody,
           });
         }
       }
@@ -502,18 +506,23 @@ export default function IncidentPage() {
         setCommentsError(data.error ?? "Could not record your reaction. Please try again.");
         return;
       }
-      setComments((c) =>
-        c.map((x) =>
-          x.id !== commentId
-            ? x
-            : {
-                ...x,
-                liked_by_me: data.liked as boolean,
-                like_count: data.count as number,
-              } as CommentItemLike,
-        ),
+      const reconciled = comments.map((x) =>
+        x.id !== commentId
+          ? x
+          : {
+              ...x,
+              liked_by_me: data.liked as boolean,
+              like_count: data.count as number,
+            } as CommentItemLike,
       );
+      setComments(reconciled);
       setNotice(null);
+      // Save the confirmed state locally too, so reopening this incident shows
+      // the like immediately (and keeps it while revalidating).
+      try {
+        const { putCachedDetail } = await import("@/lib/offline-db");
+        await putCachedDetail(id, incident, reconciled, user?.id, myConfirmation);
+      } catch { /* storage unavailable */ }
     } catch {
       revert();
       setCommentsError("Network problem — your like was not saved. Please try again.");

@@ -65,10 +65,19 @@ async function send(item: OutboxItem): Promise<{ res: Response; data: Record<str
       url = `/api/incidents/${item.incident_id}`;
       body = { action: "confirm", ...(item.payload as { response: string }) };
       break;
-    case "like":
+    case "like": {
+      // `liked` carries the intent, so replaying this request can never flip a
+      // like that already reached the server. client_id is the idempotency key.
       url = `/api/incidents/${item.incident_id}`;
-      body = { action: "like", comment_id: (item.payload as { comment_id?: string }).comment_id, ...(item.payload as { liked?: boolean }) };
+      const payload = item.payload as { comment_id?: string; liked?: boolean };
+      body = {
+        action: "like",
+        comment_id: payload.comment_id,
+        liked: payload.liked !== false,
+        client_id: item.id,
+      };
       break;
+    }
     case "comment":
       url = `/api/incidents/${item.incident_id}`;
       body = { action: "comment", client_id: item.id, ...(item.payload as { body: string }) };

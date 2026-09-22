@@ -13,6 +13,10 @@
  *      even as legacy data written before the rule existed
  *   H. NEEDS REVIEW stays out of the public feed until the threshold is met
  *   I. a already-corroborated report remains published and leaves the review queue
+ *   J. comment likes are intent-based: replaying a like or an unlike is
+ *      idempotent (a retry can never flip a saved like back off)
+ *   K. a like survives a storage-layer reload — asserted in a SEPARATE process
+ *      so it can only pass if the like was really written to the store
  *
  * The API route enforces the same rule by calling canConfirmHazard() before it
  * touches the store, so a direct API request cannot bypass it.
@@ -51,7 +55,7 @@ if (!SUITE) {
     { stdio: "inherit" },
   );
   let failed = 0;
-  for (const s of ["policy", "corroboration"]) {
+  for (const s of ["policy", "corroboration", "likes-write", "likes-read"]) {
     const r = spawnSync(process.execPath, [import.meta.filename, s], {
       stdio: "inherit",
       env: { ...process.env, ...CHILD_ENV },
@@ -266,8 +270,92 @@ async function suiteCorroboration() {
   check("no confirmations = no 'last confirmed' time", noneAt === null);
 }
 
+/* ------------------------------ suite: likes -------------------------------- */
+
+/**
+ * Likes must be an explicit state, not a flip: the app retries requests (a
+ * dropped connection, an outbox replay after coming back online), and a toggle
+ * would remove a like that had already been saved. This suite writes, replays
+ * and reads back through the real store.
+ */
+async function suiteLikesWrite() {
+  console.log("\n—— likes: explicit intent, idempotent replays ——");
+  const store = await import(`${OUT}/store.js`);
+  const community = await import(`${OUT}/community-store.js`);
+
+  const incident = await store.addIncident(incidentInput({ reporter_id: "reporter-likes" }));
+  const added = await community.addComment(
+    incident.id,
+    "user-a",
+    "User A",
+    "The road is still blocked near the school after yesterday's slide.",
+  );
+  check("comment created for the like tests", added.ok === true, JSON.stringify(added));
+  const commentId = added.comment.id;
+
+  const first = await community.setCommentLike(commentId, "user-a", true);
+  check("a like is recorded", first.ok === true && first.liked === true && first.count === 1, JSON.stringify(first));
+
+  const replay = await community.setCommentLike(commentId, "user-a", true);
+  check(
+    "replaying the same like neither inflates nor removes it",
+    replay.ok === true && replay.liked === true && replay.count === 1,
+    JSON.stringify(replay),
+  );
+
+  const other = await community.setCommentLike(commentId, "user-b", true);
+  check("a second user adds their own like", other.ok === true && other.count === 2, JSON.stringify(other));
+
+  const unlike = await community.setCommentLike(commentId, "user-a", false);
+  check(
+    "unlike removes exactly one like",
+    unlike.ok === true && unlike.liked === false && unlike.count === 1,
+    JSON.stringify(unlike),
+  );
+
+  const unlikeReplay = await community.setCommentLike(commentId, "user-a", false);
+  check(
+    "replaying an unlike is idempotent",
+    unlikeReplay.ok === true && unlikeReplay.liked === false && unlikeReplay.count === 1,
+    JSON.stringify(unlikeReplay),
+  );
+
+  const unknown = await community.setCommentLike("cm_does_not_exist", "user-a", true);
+  check("a like on an unknown comment is refused", unknown.ok === false, JSON.stringify(unknown));
+
+  const restore = await community.setCommentLike(commentId, "user-a", true);
+  check("likes restored for the persistence check", restore.ok === true && restore.count === 2, JSON.stringify(restore));
+
+  fs.writeFileSync(
+    `${DATA}/likes-fixture.json`,
+    JSON.stringify({ incidentId: incident.id, commentId, userId: "user-a" }),
+  );
+}
+
+/** Runs in a fresh process: only a real write to the store can pass this. */
+async function suiteLikesRead() {
+  console.log("\n—— likes: still present in a fresh process (persistence) ——");
+  const community = await import(`${OUT}/community-store.js`);
+  const fixture = JSON.parse(fs.readFileSync(`${DATA}/likes-fixture.json`, "utf8"));
+
+  const counts = await community.likeCountsFor([{ id: fixture.commentId }]);
+  check(
+    "the like count survives a storage-layer reload",
+    counts[fixture.commentId] === 2,
+    JSON.stringify(counts),
+  );
+  const mine = await community.hasLikedComment(fixture.commentId, fixture.userId);
+  check("the user's own like survives too", mine !== null, JSON.stringify(mine));
+  const raw = fs.readFileSync(`${DATA}/.hillsense-community.json`, "utf8");
+  check("the like record is present in the on-disk store", raw.includes(fixture.commentId));
+  const comments = await community.listComments(fixture.incidentId);
+  check("the comment itself persists as well", comments.some((c) => c.id === fixture.commentId));
+}
+
 if (SUITE === "policy") await suitePolicy();
 if (SUITE === "corroboration") await suiteCorroboration();
+if (SUITE === "likes-write") await suiteLikesWrite();
+if (SUITE === "likes-read") await suiteLikesRead();
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

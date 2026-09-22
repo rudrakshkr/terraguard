@@ -37,6 +37,8 @@ export interface CommentLikeRecord {
   comment_id: string;
   user_id: string;
   at: string;
+  /** Offline outbox idempotency key, kept so a replay can be audited. */
+  client_id?: string;
 }
 
 interface CommunityDb {
@@ -332,36 +334,65 @@ export async function hasLikedComment(commentId: string, userId: string): Promis
   return d.comment_likes.find((l) => l.comment_id === commentId && l.user_id === userId) ?? null;
 }
 
+type LikeOutcome =
+  | { ok: true; liked: boolean; count: number }
+  | { ok: false; error: string };
+
+/**
+ * Set a user's like on a comment to an EXPLICIT state.
+ *
+ * Intent, not toggling: "liked: true" means "this user likes this comment", no
+ * matter how many times the request arrives. That is what makes retries safe —
+ * an offline outbox replay or a double-tap can never flip a saved like back off,
+ * which a toggle would do (the classic "I liked it, it disappeared" bug).
+ *
+ * The comment must exist: a like is never recorded against an unknown id.
+ */
+export async function setCommentLike(
+  commentId: string,
+  userId: string,
+  liked: boolean,
+  /** Client-generated idempotency key from the offline outbox (optional). */
+  clientId?: string,
+): Promise<LikeOutcome> {
+  return mutate<LikeOutcome>((d) => {
+    if (!commentId || !(d.comments ?? []).some((c) => c.id === commentId)) {
+      return { doc: d, result: { ok: false, error: "This comment is no longer available." } };
+    }
+    const idx = d.comment_likes.findIndex((l) => l.comment_id === commentId && l.user_id === userId);
+    if (liked) {
+      if (idx >= 0) return { doc: d, result: { ok: true, liked: true, count: countFor(d, commentId) } };
+      const like: CommentLikeRecord = {
+        comment_id: commentId,
+        user_id: userId,
+        at: new Date().toISOString(),
+        ...(clientId ? { client_id: clientId } : {}),
+      };
+      return {
+        doc: { ...d, comment_likes: [...d.comment_likes, like] },
+        result: { ok: true, liked: true, count: countFor(d, commentId) + 1 },
+      };
+    }
+    if (idx < 0) return { doc: d, result: { ok: true, liked: false, count: countFor(d, commentId) } };
+    const likes = d.comment_likes.filter((_, n) => n !== idx);
+    return {
+      doc: { ...d, comment_likes: likes },
+      result: { ok: true, liked: false, count: countFor(d, commentId) - 1 },
+    };
+  });
+}
+
+/**
+ * Legacy toggle: flips the caller's like. Prefer setCommentLike() so a retried
+ * request can never undo a like that already landed.
+ */
 export async function toggleCommentLike(
   commentId: string,
   userId: string,
-  /** Client-generated idempotency key from the offline outbox (optional). */
   clientId?: string,
-): Promise<{ ok: true; liked: boolean; count: number } | { ok: false; error: string }> {
-  return mutate<{ ok: boolean; liked?: boolean; count?: number; error?: string }>((d) => {
-    // Idempotent replay for offline outbox retries.
-    if (clientId) {
-      const existing = d.comment_likes.find((l) => l.user_id === userId && l.comment_id === commentId);
-      if (existing) return { doc: d, result: { ok: true, liked: true, count: countFor(d, commentId) } };
-    }
-    const idx = d.comment_likes.findIndex((l) => l.comment_id === commentId && l.user_id === userId);
-    if (idx >= 0) {
-      // Unlike — remove the one record for this user.
-      const likes = [...d.comment_likes];
-      likes.splice(idx, 1);
-      return { doc: { ...d, comment_likes: likes }, result: { ok: true, liked: false, count: countFor(d, commentId) - 1 } };
-    }
-    const like: CommentLikeRecord = {
-      comment_id: commentId,
-      user_id: userId,
-      at: new Date().toISOString(),
-    };
-    return { doc: { ...d, comment_likes: [...d.comment_likes, like] }, result: { ok: true, liked: true, count: countFor(d, commentId) + 1 } };
-  }).then((r) =>
-    r.ok
-      ? { ok: true as const, liked: r.liked as boolean, count: r.count as number }
-      : { ok: false as const, error: r.error ?? "Could not record your reaction." },
-  );
+): Promise<LikeOutcome> {
+  const existing = await hasLikedComment(commentId, userId);
+  return setCommentLike(commentId, userId, existing === null, clientId);
 }
 
 function countFor(d: CommunityDb, commentId: string): number {

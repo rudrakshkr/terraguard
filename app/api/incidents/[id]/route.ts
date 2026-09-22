@@ -10,7 +10,7 @@ import {
   deleteComment,
   withAuthorProfiles,
   hasLikedComment,
-  toggleCommentLike,
+  setCommentLike,
   likeCountsFor,
 } from "@/lib/community-store";
 import { userFromRequest, getUserById, isOperatorUser } from "@/lib/auth";
@@ -112,6 +112,7 @@ export async function POST(
       action?: "confirm" | "comment" | "like";
       response?: "yes" | "no";
       comment_id?: string;
+      liked?: boolean; // explicit desired like state (idempotent)
       confirmed?: boolean; // legacy shape
       body?: string;
       client_id?: string; // offline-outbox idempotency key
@@ -205,11 +206,18 @@ export async function POST(
       if (!user) {
         return NextResponse.json({ error: "Please sign in to react to comments." }, { status: 401 });
       }
-      const result = await toggleCommentLike(
-        body.comment_id ?? "",
-        user.id,
-        typeof body.client_id === "string" && body.client_id.trim() ? body.client_id.trim().slice(0, 80) : undefined,
-      );
+      const commentId = body.comment_id ?? "";
+      // Explicit intent when the caller sends it (the app always does). Setting
+      // the state instead of flipping it makes retries and outbox replays safe:
+      // a duplicated request can never remove a like that already landed.
+      const desired =
+        typeof body.liked === "boolean" ? body.liked : (await hasLikedComment(commentId, user.id)) === null;
+      const sendClientId =
+        (typeof body.client_id === "string" && body.client_id.trim()) ||
+        req.headers.get("idempotency-key")?.trim() ||
+        undefined;
+      const clientId = sendClientId ? sendClientId.slice(0, 80) : undefined;
+      const result = await setCommentLike(commentId, user.id, desired, clientId);
       if (!result.ok) {
         return NextResponse.json({ error: result.error }, { status: 400 });
       }
