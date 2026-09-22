@@ -181,6 +181,8 @@ export default function IncidentPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [commentText, setCommentText] = useState("");
+  const [commentsError, setCommentsError] = useState<string | null>(null);
+  const [likingCommentId, setLikingCommentId] = useState<string | null>(null);
   const [postingComment, setPostingComment] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
   const [revalidating, setRevalidating] = useState(false);
@@ -423,10 +425,31 @@ export default function IncidentPage() {
 
   const toggleLike = async (commentId: string, currentlyLiked: boolean) => {
     if (!user) {
-      setActionError("Please sign in to react to comments.");
+      setCommentsError("Please sign in to like a comment.");
+      toast("Please sign in to like a comment.", "error");
       return;
     }
-    setActionError(null);
+    if (likingCommentId === commentId) return;
+    setCommentsError(null);
+
+    // Optimistic first: the heart responds instantly, then the server response
+    // (the source of truth) reconciles the count. A failure reverts the row.
+    const before = comments.find((c) => c.id === commentId);
+    const optimistic = comments.map((c) =>
+      c.id !== commentId
+        ? c
+        : {
+            ...c,
+            liked_by_me: !currentlyLiked,
+            like_count: currentlyLiked ? Math.max(0, (c.like_count ?? 0) - 1) : (c.like_count ?? 0) + 1,
+          } as CommentItemLike,
+    );
+    setComments(optimistic);
+    const revert = () => {
+      if (!before) return;
+      setComments((cs) => cs.map((c) => (c.id === commentId ? before : c)));
+    };
+
     // Offline: queue the reaction so it survives a dropped connection.
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       const { enqueue, newOutboxId } = await import("@/lib/offline-db");
@@ -439,23 +462,15 @@ export default function IncidentPage() {
         state: "pending",
         attempts: 0,
       });
-      const nextComments = comments.map((c) =>
-        c.id !== commentId
-          ? c
-          : {
-              ...c,
-              liked_by_me: !currentlyLiked,
-              like_count: currentlyLiked ? Math.max(0, (c.like_count ?? 0) - 1) : (c.like_count ?? 0) + 1,
-            } as CommentItemLike,
-      );
-      setComments(nextComments);
       try {
         const { putCachedDetail } = await import("@/lib/offline-db");
-        await putCachedDetail(id, incident, nextComments, user?.id, myConfirmation);
+        await putCachedDetail(id, incident, optimistic, user?.id, myConfirmation);
       } catch { /* best-effort */ }
       setNotice("Saved offline — your reaction will sync when you're back online.");
       return;
     }
+
+    setLikingCommentId(commentId);
     try {
       let res = await authFetch(`/api/incidents/${id}`, {
         method: "POST",
@@ -472,13 +487,19 @@ export default function IncidentPage() {
           });
         }
       }
-      const data = await res.json();
+      const data = (await res.json().catch(() => ({}))) as {
+        liked?: boolean;
+        count?: number;
+        error?: string;
+      };
       if (res.status === 401) {
-        setActionError("Your session has expired. Please sign in again to react to comments.");
+        revert();
+        setCommentsError("Your session has expired. Please sign in again to like a comment.");
         return;
       }
-      if (!res.ok) {
-        setActionError(data.error ?? "Could not record your reaction.");
+      if (!res.ok || typeof data.liked !== "boolean" || typeof data.count !== "number") {
+        revert();
+        setCommentsError(data.error ?? "Could not record your reaction. Please try again.");
         return;
       }
       setComments((c) =>
@@ -487,14 +508,17 @@ export default function IncidentPage() {
             ? x
             : {
                 ...x,
-                liked_by_me: data.liked,
-                like_count: data.count,
+                liked_by_me: data.liked as boolean,
+                like_count: data.count as number,
               } as CommentItemLike,
         ),
       );
-      setNotice("Reaction recorded.");
+      setNotice(null);
     } catch {
-      setActionError("Network problem — please try again.");
+      revert();
+      setCommentsError("Network problem — your like was not saved. Please try again.");
+    } finally {
+      setLikingCommentId(null);
     }
   };
 
@@ -976,18 +1000,25 @@ export default function IncidentPage() {
             </ol>
           </Disclosure>
 
-          <Disclosure title="Location on map">
+          <section className="no-print mt-6" aria-labelledby="location-heading">
+            <h2 id="location-heading" className="flex items-center gap-2 text-[15px] font-bold">
+              <MapPin className="h-4.5 w-4.5" style={{ color: "var(--accent)" }} aria-hidden />
+              Location
+            </h2>
+            <p className="mt-1 text-[12.5px] muted">{i.location}</p>
             {i.coords_approximate && (
-              <p className="mb-2 text-[12px]" style={{ color: "var(--warn)" }}>
+              <p className="mt-1 text-[12px]" style={{ color: "var(--warn)" }}>
                 Approximate location — exact coordinates were not captured for this report.
               </p>
             )}
-            <IncidentMap incidents={[i]} />
+            <div className="mt-2.5">
+              <IncidentMap incidents={[i]} />
+            </div>
             <p className="mt-2 text-[11px] faint">
               Base map © OpenStreetMap contributors. Coordinates: {i.lat.toFixed(4)}, {i.lng.toFixed(4)}
               {i.coords_approximate ? " (approximate)" : ""}
             </p>
-          </Disclosure>
+          </section>
 
           {i.sources.length > 0 && (
             <Disclosure title="View sources">
@@ -1024,26 +1055,24 @@ export default function IncidentPage() {
                     maxLength={600}
                     aria-label="Write a community update"
                   />
-                  <div className="mt-2 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <span className="text-[11px] faint sm:order-first">
+                  <div className="mt-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                    <span className="text-[11px] faint">
                       {commentText.length}/600 · posted as {user?.display_name}
                     </span>
-                    <div className="relative">
-                      <button
-                        type="submit"
-                        disabled={postingComment || !commentText.trim()}
-                        className="btn btn-primary w-full justify-center sm:w-auto"
-                      >
-                        {postingComment ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <SendHorizontal className="h-3.5 w-3.5" aria-hidden />}
-                        Post update
-                      </button>
-                      {user?.id === incident.reporter_id && (
-                        <p className="mt-1.5 text-[11px] faint">
-                          You submitted this report — your own observations can&apos;t corroborate it.
-                        </p>
-                      )}
-                    </div>
+                    <button
+                      type="submit"
+                      disabled={postingComment || !commentText.trim()}
+                      className="btn btn-primary w-full justify-center sm:w-auto"
+                    >
+                      {postingComment ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <SendHorizontal className="h-3.5 w-3.5" aria-hidden />}
+                      Post update
+                    </button>
                   </div>
+                  {isReporter && (
+                    <p className="mt-2 text-[11px] faint">
+                      You submitted this report — your own observations can&apos;t corroborate it.
+                    </p>
+                  )}
                 </form>
               ) : (
                 <p className="mt-4 rounded-lg p-3 text-[12.5px] muted" style={{ background: "var(--surface-2)" }}>
@@ -1051,6 +1080,12 @@ export default function IncidentPage() {
                     Sign in
                   </Link>{" "}
                   to post a community update.
+                </p>
+              )}
+
+              {commentsError && (
+                <p className="mt-3 text-[12.5px]" style={{ color: "var(--danger)" }} role="alert">
+                  {commentsError}
                 </p>
               )}
 
@@ -1085,12 +1120,15 @@ export default function IncidentPage() {
                           <button
                             type="button"
                             onClick={() => toggleLike(c.id, c.liked_by_me ?? false)}
-                            className="inline-flex items-center gap-1 text-[11px] font-medium max-md:min-h-11 max-md:px-1"
-                            style={{ color: c.liked_by_me ? "var(--warn)" : "var(--text-2)" }}
-                            aria-label={c.liked_by_me ? "You liked this comment" : "Like this comment"}
+                            disabled={likingCommentId === c.id}
+                            className="like-btn"
+                            data-liked={c.liked_by_me ? "true" : "false"}
+                            aria-pressed={c.liked_by_me ?? false}
+                            aria-label={c.liked_by_me ? "Remove your like from this comment" : "Like this comment"}
+                            title={c.liked_by_me ? "Remove your like" : "Like this comment"}
                           >
-                            <Heart className="h-3.5 w-3.5" aria-hidden />
-                            {c.liked_by_me ? "♥" : "♡"} {c.like_count}
+                            <Heart className="h-3.5 w-3.5" aria-hidden fill={c.liked_by_me ? "currentColor" : "none"} />
+                            {c.like_count}
                           </button>
                         )}
                         <span className="text-[11px] faint">{fmtAge(minutesSince(c.created_at))}</span>

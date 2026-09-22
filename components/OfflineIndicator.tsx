@@ -20,9 +20,17 @@ export default function OfflineIndicator() {
     const onlineInit = setTimeout(() => setOnline(navigator.onLine), 0);
 
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => {
-        /* offline support is best-effort; the app works without it */
-      });
+      navigator.serviceWorker
+        .register("/sw.js")
+        .then((reg) => {
+          // Pick up a new deploy promptly. Without this the browser can keep
+          // running the previous worker (and its cached shell) for hours, which
+          // pairs an older client bundle with newer APIs.
+          void reg.update();
+        })
+        .catch(() => {
+          /* offline support is best-effort; the app works without it */
+        });
     }
 
     const goOffline = () => setOnline(false);

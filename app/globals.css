@@ -236,6 +236,32 @@ html.dark {
     .btn-row { gap: 8px; }
   }
 
+  /* ---- comment like control: a real, obvious button, not a bare glyph ---- */
+  .like-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 9px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-2);
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    transition: border-color .15s ease, color .15s ease, background .15s ease;
+  }
+  .like-btn:hover:not(:disabled) { border-color: var(--warn); color: var(--warn); }
+  .like-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .like-btn:disabled { opacity: .6; cursor: progress; }
+  .like-btn[data-liked="true"] {
+    color: var(--warn);
+    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+    background: var(--warn-soft);
+  }
+
   /* ---- inputs that shrink gracefully in tight flex rows ----
      Base width is min-content so "flex-1" can take over on phones;
      on ≥sm they resume a usable intrinsic width. */
@@ -420,6 +446,10 @@ html.dark {
     align-items: center;
     min-height: 44px;
   }
+
+  /* Comment like pill grows into a thumb-sized control. */
+  .like-btn { min-height: 44px; padding: 0 14px; font-size: 12.5px; gap: 6px; }
+  .like-btn svg { width: 16px; height: 16px; }
 }
 
 /* ================================================================

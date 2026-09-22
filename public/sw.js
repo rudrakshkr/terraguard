@@ -2,8 +2,12 @@
  * HillSense AI service worker — offline-first app shell.
  *
  * Strategy per request type:
- *  - App shell / static assets: stale-while-revalidate. The app always opens
- *    instantly, even offline.
+ *  - Page navigations: network-first, with the cached shell as the offline
+ *    fallback. Online users always get the CURRENT build (a stale shell would
+ *    run an old client bundle against new APIs); offline the cached shell
+ *    opens instantly.
+ *  - Static assets: stale-while-revalidate (they are content-hashed, so a
+ *    cached copy is always the right copy for the shell that asked for it).
  *  - Public GET /api/incidents?public=1 and GET /api/clusters: network-first
  *    with cache fallback. These responses contain public data only.
  *  - Incident detail is NOT cached by the worker because authenticated detail
@@ -19,7 +23,7 @@
  * cached gets a real error, and the UI says the data is unavailable offline.
  */
 
-const VERSION = "hs-v3";
+const VERSION = "hs-v4";
 const SHELL_CACHE = `${VERSION}-shell`;
 const DATA_CACHE = `${VERSION}-data`;
 const GUIDANCE_CACHE = `${VERSION}-guidance`;
@@ -49,16 +53,42 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-/** Stale-while-revalidate for the app shell and static assets. */
+/** Stale-while-revalidate for static assets; network-first for navigations. */
 async function shellStrategy(request) {
   const cache = await caches.open(SHELL_CACHE);
-  const cached = await cache.match(request, { ignoreSearch: request.mode === "navigate" });
+
+  // Page navigations must reflect the deployed build so an updated client is
+  // never paired with an older/newer API. The cache is the offline fallback.
+  if (request.mode === "navigate") {
+    try {
+      const res = await fetch(request);
+      if (res && res.ok) {
+        try {
+          await cache.put(new Request(new URL(request.url).pathname), res.clone());
+        } catch { /* storage full / private mode */ }
+      }
+      return res;
+    } catch {
+      const cached = await cache.match(request, { ignoreSearch: true });
+      if (cached) return cached;
+      const root = await cache.match(new Request(new URL("/", self.location).href));
+      if (root) return root;
+      const anyShell = (await cache.match("/ask")) || (await cache.match("/report"));
+      if (anyShell) return anyShell;
+      return new Response(JSON.stringify({ error: "offline-unavailable" }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+
+  const cached = await cache.match(request);
   const network = fetch(request)
     .then((res) => {
       if (res && res.ok) {
         // Best-effort revalidation write — must never break the response.
         try {
-          cache.put(request.mode === "navigate" ? new Request(new URL(request.url).pathname) : request, res.clone());
+          cache.put(request, res.clone());
         } catch { /* storage full / private mode */ }
       }
       return res;
@@ -70,13 +100,6 @@ async function shellStrategy(request) {
   }
   const fresh = await network;
   if (fresh) return fresh;
-  // Navigation requests get the cached app shell (Next.js client router).
-  if (request.mode === "navigate") {
-    const fallback = await cache.match(new Request(new URL("/", self.location).href));
-    if (fallback) return fallback;
-    const anyShell = await cache.match("/ask") || await cache.match("/report");
-    if (anyShell) return anyShell;
-  }
   return new Response(JSON.stringify({ error: "offline-unavailable" }), {
     status: 503,
     headers: { "Content-Type": "application/json" },
